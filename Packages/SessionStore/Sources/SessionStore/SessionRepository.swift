@@ -91,11 +91,49 @@ public actor InMemorySessionRepository: SessionRepository {
         )
     }
 
+    /// A session as it comes back out of storage.
+    ///
+    /// Applies `StoredMapping.restoredStatus(of:isAttributed:)` — the same rule
+    /// the SwiftData store applies on read, called rather than reimplemented.
+    ///
+    /// Doing this on the way *out* rather than on the way in is deliberate: a
+    /// caller that saves and immediately re-reads must see what a relaunch would
+    /// show, and normalising at write time would additionally destroy the
+    /// distinction between a status that was never stored and one that was
+    /// stored as `.disconnected`.
+    private static func restored(_ session: Session) -> Session {
+        let status = StoredMapping.restoredStatus(
+            of: session.status,
+            isAttributed: !session.hostID.isUnattributed
+        )
+        guard status != session.status else { return session }
+        return Session(
+            id: session.id,
+            hostID: session.hostID,
+            backendID: session.backendID,
+            title: session.title,
+            messages: session.messages,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            status: status
+        )
+    }
+
+    /// A backend as it comes back out of storage, with availability dropped.
+    ///
+    /// `availability` answers "can the host route to this *right now*", which no
+    /// store can know. The SwiftData one drops it by not having a column; this
+    /// one has to drop it explicitly, and must, or a preview would show a
+    /// backend greyed out by a week-old `not_logged_in`.
+    private static func restored(_ backend: AgentBackend) -> AgentBackend {
+        backend.withAvailability(.available)
+    }
+
     // MARK: - Sessions
 
     /// Newest-updated first — the order the session list renders in.
     public func allSessions() async throws -> [Session] {
-        sessions.values.sorted { $0.updatedAt > $1.updatedAt }
+        sessions.values.map(Self.restored).sorted { $0.updatedAt > $1.updatedAt }
     }
 
     public func sessions(matching query: SessionQuery) async throws -> [Session] {
@@ -105,7 +143,7 @@ public actor InMemorySessionRepository: SessionRepository {
     }
 
     public func session(id: UUID) async throws -> Session? {
-        sessions[id]
+        sessions[id].map(Self.restored)
     }
 
     public func create(_ session: Session) async throws {
@@ -143,6 +181,7 @@ public actor InMemorySessionRepository: SessionRepository {
         backends
             .filter { $0.key.hostID == hostID }
             .values
+            .map(Self.restored)
             .sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
     }
 

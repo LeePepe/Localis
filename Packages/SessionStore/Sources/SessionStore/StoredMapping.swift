@@ -50,6 +50,17 @@ enum StoredMapping {
 
     /// The status a restored session comes back with.
     ///
+    /// Reads the row, then applies `restoredStatus(of:isAttributed:)` — the rule
+    /// itself lives there so both repository implementations share one copy.
+    static func status(from stored: StoredSession) -> SessionStatus {
+        restoredStatus(
+            of: decodeStatus(stored.statusJSON) ?? .disconnected,
+            isAttributed: !stored.isOrphaned && stored.hostID != nil
+        )
+    }
+
+    /// What a stored status becomes once it is read back.
+    ///
     /// Two rules, and they answer different questions:
     ///
     /// **What survives.** `.error(_)` is a historical fact — the turn already
@@ -59,7 +70,7 @@ enum StoredMapping {
     /// whole enum is persisted, not a flag.
     ///
     /// **What is normalized away.** `idle` / `disconnected` / `connecting` /
-    /// `streaming` all describe a live link, and a session read from disk has
+    /// `streaming` all describe a live link, and a session read from a store has
     /// none — the process that owned it is gone. All four come back
     /// `.disconnected`.
     ///
@@ -72,12 +83,21 @@ enum StoredMapping {
     /// Orphaning outranks any stored status: it is a fact about pairing rather
     /// than about a connection, and an unpaired host's session must not present
     /// as sendable however it was last stored.
-    static func status(from stored: StoredSession) -> SessionStatus {
-        guard !stored.isOrphaned, stored.hostID != nil else { return .orphaned }
-        guard let decoded = decodeStatus(stored.statusJSON) else { return .disconnected }
-        switch decoded {
+    ///
+    /// **This is a free function of the status, not a method on the row**, and
+    /// that is what lets `InMemorySessionRepository` apply the identical rule.
+    /// It used to read the row directly, so the in-memory store had no way to
+    /// reuse it and returned `.idle` unchanged — meaning a UI test asserting
+    /// "the composer is disabled after a relaunch" passed against the store it
+    /// injected while describing the opposite of the store that ships.
+    static func restoredStatus(
+        of status: SessionStatus,
+        isAttributed: Bool
+    ) -> SessionStatus {
+        guard isAttributed else { return .orphaned }
+        switch status {
         case .error, .orphaned:
-            return decoded
+            return status
         case .idle, .disconnected, .connecting, .streaming:
             return .disconnected
         }
