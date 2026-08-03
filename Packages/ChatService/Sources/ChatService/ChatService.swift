@@ -249,7 +249,16 @@ public actor ChatService {
     /// is what is gone, so the session reads `.disconnected` — and `canSend`
     /// stays false, which is correct, because starting a second turn while the
     /// first generates is the precise harm Amendment C §1.5 exists to prevent.
-    static func sessionStatus(for settled: MessageStatus, reason: LocalisError) -> SessionStatus {
+    ///
+    /// **`public` so the UI can assert against it rather than restate it.**
+    /// `.disconnected` here means "the link is gone, the work may well still be
+    /// running", and the composer's wording depends on that reading — it offers
+    /// to keep reading rather than announcing the reply is lost. That agreement
+    /// was reached twice independently, in two packages, and until this was
+    /// visible the only thing holding it together was that both authors
+    /// happened to mean the same thing. Nothing failed if one of them changed
+    /// their mind; the user just got told a running turn had died.
+    public static func sessionStatus(for settled: MessageStatus, reason: LocalisError) -> SessionStatus {
         settled.isInFlight ? .disconnected : .error(reason)
     }
 

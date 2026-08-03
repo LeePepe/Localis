@@ -94,6 +94,24 @@ running fine on the host; the link is what is gone, and an error banner would be
 a lie about the work. `canSend` stays false either way, which is correct —
 starting a second turn while the first generates is the harm the amendment names.
 
+### `sessionStatus` is public on purpose
+
+`.disconnected` carries a specific claim: **the link is gone, and the work may
+well still be running.** The composer's wording depends on that reading — it
+offers to keep reading the conversation rather than announcing the reply is
+lost.
+
+That agreement was reached twice independently, in this package and in LocalisUI,
+and for a while the only thing holding it together was that both authors happened
+to mean the same thing. Nothing failed if one of them changed their mind; the
+user was simply told that a turn still generating on their Mac had died. A
+`static func` that the UI can call is what turns that coincidence into something
+a test can hold: the projection is asserted against, not restated.
+
+The obligation runs both ways and is worth naming, because neither half is
+enforced by the compiler: changing this mapping means telling LocalisUI first,
+and changing what `.disconnected` says to the user means telling this layer.
+
 ## Where the cursor comes from
 
 `AgentTransport.send` returns a `TurnStream`: a `turnID` read from the response
