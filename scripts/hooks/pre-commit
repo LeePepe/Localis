@@ -20,7 +20,23 @@ STAGED=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)
 
 # ---- 1. SwiftLint staged Swift files ----------------------------------------
 
-if command -v swiftlint >/dev/null 2>&1; then
+# A missing tool is "cannot judge", not "judged clean". Resolve it from the
+# usual install locations before giving up — a hook that silently skips its
+# only lint gate looks exactly like one that ran and passed, and which of the
+# two you get depends on whose shell PATH happens to contain swiftlint.
+SWIFTLINT_BIN="$(command -v swiftlint 2>/dev/null || true)"
+for candidate in /opt/homebrew/bin/swiftlint /usr/local/bin/swiftlint; do
+  [ -n "$SWIFTLINT_BIN" ] && break
+  [ -x "$candidate" ] && SWIFTLINT_BIN="$candidate"
+done
+if [ -z "$SWIFTLINT_BIN" ]; then
+  echo "[pre-commit] ❌ swiftlint not found (looked on PATH, /opt/homebrew/bin, /usr/local/bin)"
+  echo "[pre-commit]    install it with: brew install swiftlint"
+  echo "[pre-commit]    the lint gate cannot be skipped — CI runs it with --strict and will block the merge"
+  exit 1
+fi
+
+if true; then
   STAGED_SWIFT=$(echo "$STAGED" | grep -E '\.swift$' || true)
   if [ -n "$STAGED_SWIFT" ]; then
     LINT_ARGS=()
@@ -28,7 +44,7 @@ if command -v swiftlint >/dev/null 2>&1; then
       [ -f "$file" ] && LINT_ARGS+=("$file")
     done <<< "$STAGED_SWIFT"
     if [ ${#LINT_ARGS[@]} -gt 0 ]; then
-      if ! swiftlint lint --quiet --strict -- "${LINT_ARGS[@]}"; then
+      if ! "$SWIFTLINT_BIN" lint --quiet --strict -- "${LINT_ARGS[@]}"; then
         echo "❌ SwiftLint errors in staged files. Commit aborted."
         exit 1
       fi
@@ -66,7 +82,29 @@ if echo "$STAGED" | grep -qE '^(Localis/|project\.yml$|scripts/check-wiring\.sh$
       echo "   A green wiring check that cannot fail is worse than none. Commit aborted."
       exit 1
     fi
-    bash scripts/check-wiring.sh || true
+    # The wiring check must be able to fail the commit. `|| true` here would be
+    # the same defect this gate exists to catch: a red light nobody reacts to is
+    # indistinguishable from a green one.
+    #
+    # WAIVER — expires when US4 (the `/` skill picker) reaches the app layer.
+    #   SkillsKit is declared in project.yml and deliberately kept (Amendment B
+    #   keeps the package; spec.md:508 still lists it under ChatService's
+    #   depends_on), but the app has not wired the picker UI yet. That is a real
+    #   feature gap, not a config error — deleting the dependency would turn the
+    #   light green while hiding the gap.
+    # Whoever wires US4: delete this waiver, do not extend it. Any package NOT
+    # named here fails the commit.
+    WIRING_WAIVER="SkillsKit"
+    if ! WIRING_OUT="$(bash scripts/check-wiring.sh 2>&1)"; then
+      UNWAIVED="$(echo "$WIRING_OUT" | grep -E '^\s+-\s' | grep -vE "^\s+-\s+${WIRING_WAIVER}\b" || true)"
+      if [ -n "$UNWAIVED" ]; then
+        echo "$WIRING_OUT"
+        echo "[pre-commit] ❌ wiring check failed for packages outside the waiver:"
+        echo "$UNWAIVED"
+        exit 1
+      fi
+      echo "[pre-commit] ⚠️  wiring: only the documented waiver ($WIRING_WAIVER) is unwired — allowed for now"
+    fi
   fi
 fi
 
