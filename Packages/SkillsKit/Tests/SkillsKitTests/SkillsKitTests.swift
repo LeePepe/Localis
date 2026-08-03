@@ -29,7 +29,7 @@ struct SkillParserTests {
 
     @Test("matching is case-insensitive on the prefix")
     func matchesCaseInsensitively() {
-        let backendID = UUID()
+        let backendID = "claude-sonnet"
         let skills = [
             Skill(id: "review", summary: "Review code", backendID: backendID),
             Skill(id: "refactor", summary: "Refactor code", backendID: backendID),
@@ -46,7 +46,7 @@ struct SkillParserTests {
 struct SkillTests {
     @Test("invocation prefixes the id with a slash")
     func invocationFormat() {
-        let skill = Skill(id: "review", summary: "Review code", backendID: UUID())
+        let skill = Skill(id: "review", summary: "Review code", backendID: "claude-sonnet")
 
         #expect(skill.invocation == "/review")
     }

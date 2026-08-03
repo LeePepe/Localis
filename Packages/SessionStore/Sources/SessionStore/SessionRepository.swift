@@ -14,7 +14,7 @@ public protocol SessionRepository: Sendable {
 
     func allBackends() async throws -> [AgentBackend]
     func save(_ backend: AgentBackend) async throws
-    func deleteBackend(id: UUID) async throws
+    func deleteBackend(id: String) async throws
 }
 
 /// In-memory `SessionRepository`.
@@ -24,7 +24,7 @@ public protocol SessionRepository: Sendable {
 /// same protocol and swap in behind it.
 public actor InMemorySessionRepository: SessionRepository {
     private var sessions: [UUID: Session]
-    private var backends: [UUID: AgentBackend]
+    private var backends: [String: AgentBackend]
 
     public init(sessions: [Session] = [], backends: [AgentBackend] = []) {
         self.sessions = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
@@ -54,14 +54,14 @@ public actor InMemorySessionRepository: SessionRepository {
 
     /// Stable alphabetical order so the backend picker doesn't jump around.
     public func allBackends() async throws -> [AgentBackend] {
-        backends.values.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+        backends.values.sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
     }
 
     public func save(_ backend: AgentBackend) async throws {
         backends[backend.id] = backend
     }
 
-    public func deleteBackend(id: UUID) async throws {
+    public func deleteBackend(id: String) async throws {
         backends[id] = nil
     }
 }

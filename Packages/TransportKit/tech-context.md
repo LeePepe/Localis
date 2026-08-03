@@ -34,8 +34,10 @@ protocol AgentTransport: Sendable {
 ```
 
 `TransportEvent` is `.chunk(String)` / `.completed` / `.failed(LocalisError)`.
-Each `AgentKind` will bring its own conformer — the protocol is what keeps
-adding a new agent from touching any other layer.
+One conformer serves every backend. Backends are **data** (capability
+descriptors from `/v1/models`), never code branches — constitution principle IV
+forbids a `switch` on a backend name anywhere in this layer. Adding a sixth
+agent is a Mac-side adapter, with zero iOS changes and zero releases.
 
 ## SSEParser
 

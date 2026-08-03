@@ -29,7 +29,8 @@ public struct TransportRequest: Equatable, Sendable {
 ///
 /// The single seam between Localis and any agent backend. `ChatService` depends
 /// on this protocol, never on a concrete transport — which is what lets tests
-/// run without a live agent and lets each `AgentKind` bring its own protocol.
+/// run without a live agent. Backends are data, so one conformer serves every
+/// backend the bridge advertises — there is no per-backend implementation.
 public protocol AgentTransport: Sendable {
     /// Streams the agent's reply as a sequence of events.
     ///

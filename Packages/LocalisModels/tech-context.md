@@ -11,7 +11,7 @@ red_lines:
 roles:
   Types: [AgentBackend, Message, Session, LocalisError]
 test: swift test --package-path Packages/LocalisModels
-owns: [AgentKind, AgentBackend, Message, MessageRole, MessageStatus, Session, LocalisError]
+owns: [AgentBackend, Message, MessageRole, MessageStatus, Session, LocalisError]
 ---
 
 # LocalisModels Context
@@ -25,8 +25,7 @@ asymmetry is deliberate — it is what keeps the dependency graph acyclic.
 
 | Type | Purpose |
 |---|---|
-| `AgentKind` | Which local agent (Claude / OpenClaw / Hermes / Kimi / Codex) |
-| `AgentBackend` | A configured connection: kind + user-supplied name + endpoint |
+| `AgentBackend` | A backend advertised by the bridge: id, label, capability set |
 | `Message` | One turn: role, text, timestamp, delivery status |
 | `Session` | A conversation with one backend; holds the transcript |
 | `LocalisError` | The single error vocabulary all layers map into |
@@ -37,7 +36,7 @@ Every mutation returns a new value:
 
 - `Message.appending(_:)` — the streaming path; each chunk yields a new message.
 - `Session.replacing(_:at:)` — swaps a message by id, returns a new session.
-- `AgentBackend.withEndpoint(_:)` / `.withName(_:)`.
+- `AgentBackend.withDisplayName(_:)` / `.withCapabilities(_:)`.
 
 `Session.replacing` is a no-op for an unknown id rather than a crash or an
 append — a stale message id must not corrupt a transcript.

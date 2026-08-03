@@ -12,19 +12,18 @@ struct InMemorySessionRepositoryTests {
     private static func makeSession(title: String, updatedAt: Date) -> Session {
         Session(
             id: UUID(),
-            backendID: UUID(),
+            backendID: "test-backend",
             title: title,
             createdAt: t0,
             updatedAt: updatedAt
         )
     }
 
-    private static func makeBackend(name: String) throws -> AgentBackend {
+    private static func makeBackend(name: String) -> AgentBackend {
         AgentBackend(
-            id: UUID(),
-            kind: .claude,
-            name: name,
-            endpoint: try #require(URL(string: "http://127.0.0.1:8080"))
+            id: name.lowercased(),
+            displayName: name,
+            capabilities: ["streaming"]
         )
     }
 
@@ -86,21 +85,21 @@ struct InMemorySessionRepositoryTests {
     @Test("backends come back in alphabetical order")
     func backendsSortedByName() async throws {
         let repository = InMemorySessionRepository()
-        try await repository.save(try Self.makeBackend(name: "Zeta"))
-        try await repository.save(try Self.makeBackend(name: "Alpha"))
+        try await repository.save(Self.makeBackend(name: "Zeta"))
+        try await repository.save(Self.makeBackend(name: "Alpha"))
 
-        let names = try await repository.allBackends().map(\.name)
+        let names = try await repository.allBackends().map(\.displayName)
 
         #expect(names == ["Alpha", "Zeta"])
     }
 
     @Test("deleteBackend removes only the requested backend")
     func deleteBackendIsScoped() async throws {
-        let doomed = try Self.makeBackend(name: "Doomed")
-        let repository = InMemorySessionRepository(backends: [doomed, try Self.makeBackend(name: "Kept")])
+        let doomed = Self.makeBackend(name: "Doomed")
+        let repository = InMemorySessionRepository(backends: [doomed, Self.makeBackend(name: "Kept")])
 
         try await repository.deleteBackend(id: doomed.id)
 
-        #expect(try await repository.allBackends().map(\.name) == ["Kept"])
+        #expect(try await repository.allBackends().map(\.displayName) == ["Kept"])
     }
 }

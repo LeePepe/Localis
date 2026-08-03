@@ -9,16 +9,11 @@ import LocalisModels
 struct SessionRowStateTests {
     private static let t0 = Date(timeIntervalSince1970: 1_700_000_000)
 
-    private static func makeBackend(id: UUID, name: String) throws -> AgentBackend {
-        AgentBackend(
-            id: id,
-            kind: .claude,
-            name: name,
-            endpoint: try #require(URL(string: "http://127.0.0.1:8080"))
-        )
+    private static func makeBackend(id: String, name: String) -> AgentBackend {
+        AgentBackend(id: id, displayName: name, capabilities: ["streaming"])
     }
 
-    private static func makeSession(backendID: UUID, messages: [Message]) -> Session {
+    private static func makeSession(backendID: String, messages: [Message]) -> Session {
         Session(
             id: UUID(),
             backendID: backendID,
@@ -31,8 +26,8 @@ struct SessionRowStateTests {
 
     @Test("preview shows the last message and the backend name")
     func projectsLastMessage() throws {
-        let backendID = UUID()
-        let backend = try Self.makeBackend(id: backendID, name: "MacBook Claude")
+        let backendID = "claude-sonnet"
+        let backend = Self.makeBackend(id: backendID, name: "MacBook Claude")
         let session = Self.makeSession(backendID: backendID, messages: [
             Message(id: UUID(), role: .user, text: "first", createdAt: Self.t0),
             Message(id: UUID(), role: .assistant, text: "second", createdAt: Self.t0)
@@ -47,12 +42,12 @@ struct SessionRowStateTests {
 
     @Test("an empty transcript reads as 'No messages yet'")
     func emptyTranscriptPlaceholder() throws {
-        let backendID = UUID()
+        let backendID = "claude-sonnet"
         let session = Self.makeSession(backendID: backendID, messages: [])
 
         let row = SessionRowState.make(
             from: session,
-            backends: [try Self.makeBackend(id: backendID, name: "Kimi")]
+            backends: [Self.makeBackend(id: backendID, name: "Kimi")]
         )
 
         #expect(row.preview == "No messages yet")
@@ -60,7 +55,7 @@ struct SessionRowStateTests {
 
     @Test("a long preview is elided at the limit")
     func elidesLongPreview() throws {
-        let backendID = UUID()
+        let backendID = "claude-sonnet"
         let long = String(repeating: "x", count: SessionRowState.previewLimit + 20)
         let session = Self.makeSession(backendID: backendID, messages: [
             Message(id: UUID(), role: .assistant, text: long, createdAt: Self.t0)
@@ -68,7 +63,7 @@ struct SessionRowStateTests {
 
         let row = SessionRowState.make(
             from: session,
-            backends: [try Self.makeBackend(id: backendID, name: "Kimi")]
+            backends: [Self.makeBackend(id: backendID, name: "Kimi")]
         )
 
         #expect(row.preview.hasSuffix("…"))
@@ -77,14 +72,14 @@ struct SessionRowStateTests {
 
     @Test("newlines are collapsed so the row stays one line")
     func collapsesNewlines() throws {
-        let backendID = UUID()
+        let backendID = "claude-sonnet"
         let session = Self.makeSession(backendID: backendID, messages: [
             Message(id: UUID(), role: .assistant, text: "line1\nline2", createdAt: Self.t0)
         ])
 
         let row = SessionRowState.make(
             from: session,
-            backends: [try Self.makeBackend(id: backendID, name: "Kimi")]
+            backends: [Self.makeBackend(id: backendID, name: "Kimi")]
         )
 
         #expect(row.preview == "line1 line2")
@@ -92,7 +87,7 @@ struct SessionRowStateTests {
 
     @Test("a deleted backend falls back to a placeholder name")
     func unknownBackendFallback() {
-        let session = Self.makeSession(backendID: UUID(), messages: [])
+        let session = Self.makeSession(backendID: "orphan-backend", messages: [])
 
         let row = SessionRowState.make(from: session, backends: [])
 
@@ -101,14 +96,14 @@ struct SessionRowStateTests {
 
     @Test("a streaming last message marks the row as streaming")
     func detectsStreaming() throws {
-        let backendID = UUID()
+        let backendID = "claude-sonnet"
         let session = Self.makeSession(backendID: backendID, messages: [
             Message(id: UUID(), role: .assistant, text: "par", createdAt: Self.t0, status: .streaming)
         ])
 
         let row = SessionRowState.make(
             from: session,
-            backends: [try Self.makeBackend(id: backendID, name: "Kimi")]
+            backends: [Self.makeBackend(id: backendID, name: "Kimi")]
         )
 
         #expect(row.isStreaming)

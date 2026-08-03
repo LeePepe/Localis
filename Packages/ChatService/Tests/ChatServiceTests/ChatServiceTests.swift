@@ -34,16 +34,11 @@ private struct ScriptedTransport: AgentTransport {
 struct ChatServiceTests {
     private static let t0 = Date(timeIntervalSince1970: 1_700_000_000)
 
-    private static func makeBackend() throws -> AgentBackend {
-        AgentBackend(
-            id: UUID(),
-            kind: .claude,
-            name: "Test",
-            endpoint: try #require(URL(string: "http://127.0.0.1:8080"))
-        )
+    private static func makeBackend() -> AgentBackend {
+        AgentBackend(id: "test-backend", displayName: "Test", capabilities: ["streaming"])
     }
 
-    private static func makeSession(backendID: UUID) -> Session {
+    private static func makeSession(backendID: String) -> Session {
         Session(id: UUID(), backendID: backendID, title: "Test", createdAt: t0, updatedAt: t0)
     }
 
@@ -56,7 +51,7 @@ struct ChatServiceTests {
 
     @Test("an empty prompt is rejected before anything is persisted")
     func rejectsEmptyPrompt() async throws {
-        let backend = try Self.makeBackend()
+        let backend = Self.makeBackend()
         let repository = InMemorySessionRepository()
         let service = Self.makeService(
             transport: ScriptedTransport(events: []),
@@ -75,7 +70,7 @@ struct ChatServiceTests {
 
     @Test("streamed chunks accumulate into one complete assistant message")
     func accumulatesChunks() async throws {
-        let backend = try Self.makeBackend()
+        let backend = Self.makeBackend()
         let repository = InMemorySessionRepository()
         let service = Self.makeService(
             transport: ScriptedTransport(events: [.chunk("Hel"), .chunk("lo"), .completed]),
@@ -102,7 +97,7 @@ struct ChatServiceTests {
 
     @Test("the final snapshot is persisted to the repository")
     func persistsFinalSnapshot() async throws {
-        let backend = try Self.makeBackend()
+        let backend = Self.makeBackend()
         let repository = InMemorySessionRepository()
         let session = Self.makeSession(backendID: backend.id)
         let service = Self.makeService(
@@ -120,7 +115,7 @@ struct ChatServiceTests {
 
     @Test("a mid-stream failure keeps partial text and marks the message failed")
     func failureKeepsPartialText() async throws {
-        let backend = try Self.makeBackend()
+        let backend = Self.makeBackend()
         let repository = InMemorySessionRepository()
         let service = Self.makeService(
             transport: ScriptedTransport(events: [.chunk("par")], failure: LocalisError.connectionLost),
@@ -143,7 +138,7 @@ struct ChatServiceTests {
 
     @Test("a stream ending without an explicit completed event still completes")
     func implicitCompletion() async throws {
-        let backend = try Self.makeBackend()
+        let backend = Self.makeBackend()
         let repository = InMemorySessionRepository()
         let service = Self.makeService(
             transport: ScriptedTransport(events: [.chunk("done")]),

@@ -51,7 +51,7 @@ struct SessionTests {
     private static func makeSession(messages: [Message] = []) -> Session {
         Session(
             id: UUID(),
-            backendID: UUID(),
+            backendID: "test-backend",
             title: "Test",
             messages: messages,
             createdAt: created,
@@ -99,28 +99,44 @@ struct SessionTests {
 
 @Suite("AgentBackend")
 struct AgentBackendTests {
-    @Test("withEndpoint keeps identity and changes only the endpoint")
-    func withEndpointIsImmutable() throws {
-        let original = AgentBackend(
-            id: UUID(),
-            kind: .claude,
-            name: "MacBook Claude",
-            endpoint: try #require(URL(string: "http://192.168.1.20:8080"))
+    private static func makeBackend() -> AgentBackend {
+        AgentBackend(
+            id: "claude-sonnet",
+            displayName: "MacBook Claude",
+            capabilities: ["streaming", "tools"]
         )
-
-        let moved = original.withEndpoint(try #require(URL(string: "http://192.168.1.30:9000")))
-
-        #expect(moved.id == original.id)
-        #expect(moved.name == original.name)
-        #expect(moved.endpoint.absoluteString == "http://192.168.1.30:9000")
-        #expect(original.endpoint.absoluteString == "http://192.168.1.20:8080")
     }
 
-    @Test("every agent kind has a non-empty display name")
-    func allKindsHaveDisplayNames() {
-        for kind in AgentKind.allCases {
-            #expect(!kind.displayName.isEmpty)
-        }
+    @Test("withDisplayName keeps identity and changes only the label")
+    func withDisplayNameIsImmutable() {
+        let original = Self.makeBackend()
+
+        let renamed = original.withDisplayName("Studio Claude")
+
+        #expect(renamed.id == original.id)
+        #expect(renamed.capabilities == original.capabilities)
+        #expect(renamed.displayName == "Studio Claude")
+        #expect(original.displayName == "MacBook Claude")
+    }
+
+    @Test("supports reads the advertised capability set")
+    func supportsReadsCapabilities() {
+        // Constitution principle IV: a feature check asks what a backend *can
+        // do*, never what it *is*. If this ever becomes a switch over a closed
+        // set of backend names, adding a sixth agent needs an App Store release.
+        let backend = Self.makeBackend()
+
+        #expect(backend.supports("streaming"))
+        #expect(backend.supports("tools"))
+        #expect(!backend.supports("resume"))
+    }
+
+    @Test("a backend advertising nothing supports nothing")
+    func emptyCapabilitiesSupportNothing() {
+        let bare = AgentBackend(id: "bare", displayName: "Bare")
+
+        #expect(bare.capabilities.isEmpty)
+        #expect(!bare.supports("streaming"))
     }
 }
 

@@ -11,9 +11,9 @@ public struct Skill: Identifiable, Codable, Hashable, Sendable {
     /// One-line description shown in the picker.
     public let summary: String
     /// Which backend advertised it.
-    public let backendID: UUID
+    public let backendID: String
 
-    public init(id: String, summary: String, backendID: UUID) {
+    public init(id: String, summary: String, backendID: String) {
         self.id = id
         self.summary = summary
         self.backendID = backendID

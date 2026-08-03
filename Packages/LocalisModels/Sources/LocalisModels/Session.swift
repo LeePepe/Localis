@@ -6,7 +6,7 @@ import Foundation
 /// operations return a new `Session`.
 public struct Session: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
-    public let backendID: UUID
+    public let backendID: String
     public let title: String
     public let messages: [Message]
     public let createdAt: Date
@@ -14,7 +14,7 @@ public struct Session: Identifiable, Codable, Hashable, Sendable {
 
     public init(
         id: UUID,
-        backendID: UUID,
+        backendID: String,
         title: String,
         messages: [Message] = [],
         createdAt: Date,

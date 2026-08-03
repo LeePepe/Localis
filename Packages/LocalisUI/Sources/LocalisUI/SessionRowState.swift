@@ -41,7 +41,7 @@ public struct SessionRowState: Identifiable, Equatable, Sendable {
             id: session.id,
             title: session.title,
             preview: preview(for: session.lastMessage),
-            backendName: backend?.name ?? "Unknown agent",
+            backendName: backend?.displayName ?? "Unknown agent",
             isStreaming: session.lastMessage?.status == .streaming
         )
     }
