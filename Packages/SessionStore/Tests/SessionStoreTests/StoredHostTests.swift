@@ -115,6 +115,32 @@ struct StoredHostTests {
         #expect(loaded.canConnect == false)
     }
 
+    /// A machine seen on the network but never paired is stored like any other.
+    ///
+    /// `LocalisHost(adopting:)` produces exactly this — `.discovered`, no pin,
+    /// `canConnect == false` — so it is the *ordinary* input to `save`, not an
+    /// edge case. The user who spots their Mac in the list and quits before
+    /// pairing should still see it next launch.
+    ///
+    /// Asserted rather than left to the absence of a guard: "we happen not to
+    /// reject it today" and "we promise not to" read identically in the
+    /// implementation, and only one of them survives someone adding a
+    /// plausible-looking `guard host.pairingState == .paired`.
+    @Test("a discovered but unpaired machine is stored, not refused")
+    func discoveredHostIsStorable() async throws {
+        let repository = try Self.repository()
+        let discovered = Self.host(id: Self.idA, name: "Studio", pairingState: .discovered)
+        #expect(discovered.pinnedSPKI == nil)
+        #expect(discovered.canConnect == false)
+
+        try await repository.save(discovered)
+
+        let loaded = try #require(try await repository.host(id: Self.idA))
+        #expect(loaded.pairingState == .discovered)
+        #expect(loaded.canConnect == false)
+        #expect(try await repository.hosts().map(\.id) == [Self.idA])
+    }
+
     @Test("a host that was never saved is absent rather than invented")
     func unknownHostIsNil() async throws {
         let repository = try Self.repository()
