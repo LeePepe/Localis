@@ -49,12 +49,30 @@ struct HostRecoveryTests {
         )
     }
 
+    /// A Keychain with nothing in it.
+    ///
+    /// Passed explicitly at every construction site in this suite rather than
+    /// relying on the default. The default is the **real** Keychain, and a test
+    /// that quietly reaches it fails differently in CI than on a developer's
+    /// machine — the exact failure mode that makes people stop trusting red.
+    ///
+    /// Empty is also the right fixture here: this suite is about what survives
+    /// the trip to disk, and the answer is "the record, never the pin". The
+    /// join itself is `HostAssemblyTests`.
+    private struct NoPins: PinReading {
+        func pin(for host: HostID) throws -> SPKIHash? { nil }
+    }
+
+    private static func model(_ repository: any SessionRepository) async -> HostListModel {
+        await HostListModel(repository: repository, credentials: NoPins())
+    }
+
     @Test("a host added before the app quit is on screen after it relaunches")
     func hostSurvivesRelaunch() async throws {
         let saved = Self.mac()
         let repository = try await Self.relaunching { try await $0.save(saved) }
 
-        let model = await HostListModel(repository: repository)
+        let model = await Self.model(repository)
         await model.load()
 
         // The assertion the whole milestone is about. Anything weaker — "the
@@ -71,11 +89,11 @@ struct HostRecoveryTests {
         // four joins had a green test on either side of it and nothing running
         // through.
         let container = try SessionStoreContainer.inMemory()
-        let first = await HostListModel(repository: SwiftDataSessionRepository(container: container))
+        let first = await Self.model(SwiftDataSessionRepository(container: container))
 
         try await first.addHost(typedAddress: "https://studio.local:9000")
 
-        let second = await HostListModel(repository: SwiftDataSessionRepository(container: container))
+        let second = await Self.model(SwiftDataSessionRepository(container: container))
         await second.load()
 
         #expect(await second.rows.map(\.title) == ["studio.local:9000"])
@@ -85,7 +103,7 @@ struct HostRecoveryTests {
     func recoveredHostKeepsItsPairingState() async throws {
         let repository = try await Self.relaunching { try await $0.save(Self.mac()) }
 
-        let model = await HostListModel(repository: repository)
+        let model = await Self.model(repository)
         await model.load()
 
         // If persistence lost `pairingState` and the default filled in
@@ -116,15 +134,16 @@ struct HostRecoveryTests {
         let paired = Self.mac().beginningPairing().paired(pinning: SPKIHash(base64: "AAA="))
         let repository = try await Self.relaunching { try await $0.save(paired) }
 
-        let model = await HostListModel(repository: repository)
+        let model = await Self.model(repository)
         await model.load()
 
         let row = try #require(await model.rows.first)
         #expect(row.status == "Paired")
-        // Not an oversight and not a TODO: until the composition point joins
-        // this record to the Keychain pin, nothing read from the store may
-        // offer to connect. A green here on `true` would mean the pin came
-        // back from somewhere it must not live.
+        // Not an oversight and not a TODO. This suite injects an **empty**
+        // Keychain (`NoPins`), so it is measuring the store's half alone, and
+        // the store's half can never make a machine connectable. That the join
+        // does make it connectable is `HostAssemblyTests`; keeping the two
+        // apart is what lets this one fail for exactly one reason.
         #expect(row.isConnectable == false)
     }
 
@@ -160,7 +179,7 @@ struct HostRecoveryTests {
         )
         let repository = try await Self.relaunching { try await $0.save(pairedButUnpinned) }
 
-        let model = await HostListModel(repository: repository)
+        let model = await Self.model(repository)
         await model.load()
 
         let row = try #require(await model.rows.first)
@@ -173,7 +192,7 @@ struct HostRecoveryTests {
         // Macs" are different sentences, and an empty list tells the user the
         // first one. This is the sixth member of the defect family this project
         // keeps finding: nothing happening, dressed as everything being fine.
-        let model = await HostListModel(repository: FailingRepository())
+        let model = await Self.model(FailingRepository())
         await model.load()
 
         #expect(await model.loadError != nil)
@@ -184,7 +203,7 @@ struct HostRecoveryTests {
     func invalidAddressStoresNothing() async throws {
         let container = try SessionStoreContainer.inMemory()
         let repository = SwiftDataSessionRepository(container: container)
-        let model = await HostListModel(repository: repository)
+        let model = await Self.model(repository)
 
         // Plaintext, deliberately. `EndpointValidator` is HTTPS-only, and a
         // manual field is where a plaintext fallback would reappear.
@@ -206,7 +225,7 @@ struct HostRecoveryTests {
             try await $0.save(Self.mac(named: "Air", at: "air.local"))
         }
 
-        let model = await HostListModel(repository: repository)
+        let model = await Self.model(repository)
         await model.load()
 
         #expect(await model.rows.map(\.title) == ["Air", "Studio"])

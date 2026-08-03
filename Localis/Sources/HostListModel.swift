@@ -21,9 +21,19 @@ final class HostListModel {
     private(set) var loadError: String?
 
     private let repository: any SessionRepository
+    /// Reads go through the join, not the store.
+    ///
+    /// **This is the difference between a list and a usable list.** The store
+    /// has no pin column, so a host read straight from it always has
+    /// `canConnect == false` — the screen would show every machine as
+    /// unconnectable forever, including the ones the user paired. Writes still
+    /// go to the repository directly: adding a machine creates a record, and
+    /// records are the store's business.
+    private let assembly: HostAssembly
 
-    init(repository: any SessionRepository) {
+    init(repository: any SessionRepository, credentials: any PinReading = HostCredentialStore()) {
         self.repository = repository
+        self.assembly = HostAssembly(repository: repository, credentials: credentials)
     }
 
     /// Reads every machine on file.
@@ -33,7 +43,7 @@ final class HostListModel {
     /// FR-026's promise from the user's side.
     func load() async {
         do {
-            rows = try await repository.hosts().map(HostRowState.init(host:))
+            rows = try await assembly.hosts().map(HostRowState.init(host:))
             loadError = nil
         } catch {
             // Never an empty list on failure. "You have no Macs" and "we could
