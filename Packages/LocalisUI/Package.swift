@@ -10,14 +10,12 @@ let package = Package(
     dependencies: [
         .package(path: "../LocalisModels"),
         .package(path: "../DesignKit"),
-        .package(path: "../ChatService"),
-        .package(path: "../SessionStore"),
-        .package(path: "../SkillsKit")
+        .package(path: "../ChatService")
     ],
     targets: [
         .target(
             name: "LocalisUI",
-            dependencies: ["LocalisModels", "DesignKit", "ChatService", "SessionStore", "SkillsKit"],
+            dependencies: ["LocalisModels", "DesignKit", "ChatService"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(

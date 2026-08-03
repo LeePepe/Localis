@@ -1,9 +1,10 @@
 ---
 layer: LocalisUI
 role: Localis's screens — session list, transcript, composer — plus the pure view projections they render
-depends_on: [LocalisModels, DesignKit, ChatService, SessionStore, SkillsKit]
+depends_on: [LocalisModels, DesignKit, ChatService]
 depended_by: [Localis]
 red_lines:
+  - Never reach `TransportKit` or `SessionStore` directly — everything goes through `ChatService`. The dependency is not declared, so a stray import fails the build rather than the review.
   - Every color, radius, and spacing comes from `@Environment(\.theme)`. A literal `Color.blue` or `.padding(17)` in this layer is a design-system leak.
   - Views own no business rules. Anything worth a unit test — truncation, ordering, "which backend is this?" — belongs in a pure projection like `SessionRowState`, not in a `body`.
   - Views never mutate a model in place. They render snapshots and send intent up; state changes come back as new values.
