@@ -129,7 +129,7 @@ struct ChatServiceTests {
         #expect(stored.messages.last?.status == .complete)
     }
 
-    @Test("a mid-stream failure keeps partial text and marks the message failed")
+    @Test("a mid-stream failure keeps partial text and settles the message")
     func failureKeepsPartialText() async throws {
         let backend = Self.makeBackend()
         let session = Self.makeSession(backendID: backend.id)
@@ -148,7 +148,35 @@ struct ChatServiceTests {
 
         let final = try #require(latest)
         #expect(final.messages.last?.text == "par")
+        // `.interrupted`, not `.failed`: a dropped connection lost the content
+        // but reported no failure, and Amendment C §1.5 splits the two. See
+        // `ChatServiceDetachmentTests` for the rule this follows.
+        #expect(final.messages.last?.status == .interrupted)
+    }
+
+    @Test("a failure the backend reports is marked failed, not interrupted")
+    func reportedFailureIsFailed() async throws {
+        // The other side of the split. A revoked token is a real failure with
+        // a reason to show; no amount of reconnecting changes it, so calling
+        // it `.interrupted` would offer a retry that cannot work.
+        let backend = Self.makeBackend()
+        let session = Self.makeSession(backendID: backend.id)
+        let repository = Self.makeRepository(seeding: session)
+        let service = Self.makeService(
+            transport: ScriptedTransport(
+                events: [.chunk("par")], failure: LocalisError.tokenRevoked
+            ),
+            repository: repository
+        )
+
+        var latest: Session?
+        for try await s in try await service.send(
+            prompt: "hi", in: session, to: backend
+        ) { latest = s }
+
+        let final = try #require(latest)
         #expect(final.messages.last?.status == .failed)
+        #expect(final.messages.last?.text == "par")
     }
 
     @Test("a stream ending without an explicit completed event still completes")
@@ -279,11 +307,16 @@ struct ChatServiceSettlementTests {
         )
     }
 
-    @Test("a failed turn is never left in flight")
+    @Test("a broken turn is never left in flight")
     func failureIsTerminal() async throws {
         // The worst outcome is not "failed" — it is a message stuck at
         // `.streaming`, which renders as a spinner that never stops and gives
         // the user nothing to act on.
+        //
+        // The assertion is `!isInFlight`, not `isTerminal`: `.interrupted` is
+        // deliberately non-terminal (a retry supersedes the message), so
+        // demanding terminality here would be testing the wrong property and
+        // would forbid the correct settlement.
         let session = Self.makeSession()
         let repository = InMemorySessionRepository(sessions: [session])
         let service = ChatService(
@@ -301,7 +334,7 @@ struct ChatServiceSettlementTests {
         let stored = try #require(try await repository.session(id: session.id))
         let assistant = try #require(stored.messages.last)
         #expect(!assistant.isInFlight)
-        #expect(assistant.isTerminal)
+        #expect(assistant.status != .streaming)
     }
 
     @Test("a failure is retryable and a completed turn is not")
@@ -484,5 +517,147 @@ struct ChatServiceFailureReasonTests {
 
         #expect(try #require(latest).status == .idle)
         #expect(try #require(latest).canSend)
+    }
+}
+
+/// A stream that dies under us is not the same event as a backend reporting
+/// failure, and Amendment C §1.5 splits the outcome in two.
+///
+/// The rule this suite pins, in one sentence: **`LocalisError.isRetryable`
+/// decides whether the break is survivable at all, and `TurnReconciliation`
+/// decides whether a survivable break is resumable.** Neither judgement is made
+/// twice. Writing `if cursor != nil` here would agree with the store by
+/// coincidence, and one refactor on either side would end the agreement
+/// silently.
+@Suite("ChatService distinguishes detached from interrupted")
+struct ChatServiceDetachmentTests {
+    private static let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+    private static let hostID = HostID(
+        rawValue: UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
+    )
+    private static let backend = AgentBackend(
+        id: "claude", displayName: "Claude", capabilities: [.streaming]
+    )
+
+    private static func makeSession() -> Session {
+        Session(
+            id: UUID(),
+            hostID: hostID,
+            backendID: "claude",
+            title: "Test",
+            createdAt: t0,
+            updatedAt: t0
+        )
+    }
+
+    @Test("a dropped connection with no resume point is interrupted, not failed")
+    func noCursorIsInterrupted() async throws {
+        // `.failed` claims the turn is over *and* that we know why it ended
+        // badly. A dropped Wi-Fi connection is neither — the content is simply
+        // gone, which is what `.interrupted` says and what makes a retry the
+        // right offer (Amendment C §1.5).
+        let session = Self.makeSession()
+        let repository = InMemorySessionRepository(sessions: [session])
+        let service = ChatService(
+            transport: ScriptedTransport(
+                events: [.chunk("par")], failure: LocalisError.connectionLost
+            ),
+            repository: repository,
+            now: { Self.t0 }
+        )
+
+        var latest: Session?
+        for try await s in try await service.send(
+            prompt: "hi", in: session, to: Self.backend
+        ) { latest = s }
+
+        let final = try #require(latest)
+        let assistant = try #require(final.messages.last)
+        #expect(assistant.status == .interrupted)
+        #expect(assistant.text == "par")
+        #expect(assistant.isRetryable)
+        // The host is definitively not working on this any more.
+        #expect(!assistant.isInFlight)
+    }
+
+    @Test("a failure a retry cannot change stays failed, cursor or not")
+    func unretryableErrorIsNeverResumable() {
+        // The reason `isRetryable` is the gate rather than a list of
+        // "connection-ish" errors: a revoked token produces exactly the same
+        // broken stream as a dropped connection, and resuming it would replay
+        // the same refusal. No cursor rescues it.
+        let cursor = TurnCursor(turnID: "t-9", lastSeq: 12)
+
+        #expect(ChatService.settledStatus(for: .tokenRevoked, cursor: cursor) == .failed)
+        #expect(ChatService.settledStatus(for: .tokenRevoked, cursor: nil) == .failed)
+        #expect(ChatService.settledStatus(for: .certificatePinMismatch, cursor: cursor) == .failed)
+    }
+
+    @Test("a survivable break with a resume point is detached, never retryable")
+    func cursorMakesItDetached() {
+        // The safety property of the whole amendment: the host is still
+        // generating, so offering a retry starts a second job on the user's
+        // own machine while the first is still burning tokens.
+        let cursor = TurnCursor(turnID: "t-9", lastSeq: 12)
+        let status = ChatService.settledStatus(for: .connectionLost, cursor: cursor)
+
+        #expect(status == .detached)
+        #expect(!status.isRetryable)
+        #expect(status.isInFlight)
+    }
+
+    @Test("a survivable break with no resume point is interrupted")
+    func noCursorMakesItInterrupted() {
+        let status = ChatService.settledStatus(for: .connectionLost, cursor: nil)
+
+        #expect(status == .interrupted)
+        #expect(status.isRetryable)
+    }
+
+    @Test("the settled status agrees with the store's retry verdict, by derivation")
+    func retryabilityAgreesWithTheStore() {
+        // The point store made and I am applying to my own layer: three layers
+        // of defence only mean anything if they are all derived from one rule.
+        // This asserts the agreement directly instead of trusting that two
+        // hand-written switches happen to line up.
+        let cases: [(LocalisError, TurnCursor?)] = [
+            (.connectionLost, TurnCursor(turnID: "t-1", lastSeq: 0)),
+            (.connectionLost, nil),
+            (.unreachable, TurnCursor(turnID: "t-2", lastSeq: 7)),
+            (.truncated, nil),
+        ]
+
+        for (error, cursor) in cases {
+            let verdict = TurnReconciliation.resolve(state: .streaming, cursor: cursor)
+            let status = ChatService.settledStatus(for: error, cursor: cursor)
+            #expect(
+                status.isRetryable == verdict.allowsRetry,
+                "\(error) with cursor \(String(describing: cursor?.turnID)) disagrees"
+            )
+        }
+    }
+
+    @Test("a detached turn is not reported as an error")
+    func detachedIsNotAnError() {
+        // `.error` puts a red banner on a conversation whose turn is running
+        // perfectly well on the host. The link is what is gone, so the session
+        // reads `.disconnected` — and `canSend` stays false, which is correct:
+        // starting a second turn while the first generates is the exact harm.
+        let status = ChatService.sessionStatus(
+            for: .detached, reason: .connectionLost
+        )
+
+        #expect(status == .disconnected)
+    }
+
+    @Test("an interrupted turn keeps the reason on the session")
+    func interruptedKeepsItsReason() {
+        // Nothing is running any more, so the user is owed the reason and the
+        // retry — this is the case where `.error` is the honest reading.
+        let status = ChatService.sessionStatus(
+            for: .interrupted, reason: .connectionLost
+        )
+
+        #expect(status == .error(.connectionLost))
     }
 }

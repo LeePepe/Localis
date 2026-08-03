@@ -68,6 +68,41 @@ conversation broken for good: `Session.canSend` is `status == .idle`, so a stale
 `.error` leaves the composer refusing input on a session that works (FR-053).
 Every failure path in this layer has a matching clear.
 
+## A broken stream is not automatically a failure
+
+Amendment C §1.5 splits one outcome into three, and this layer settles them from
+two rules it does not itself own:
+
+1. **Is the break survivable?** `LocalisError.isRetryable` answers. A revoked
+   token and a dropped connection produce the same broken stream, but resuming
+   the first only replays the refusal — so it settles `.failed`.
+2. **Is a survivable break resumable?** `TurnReconciliation.resolve` answers,
+   from the cursor: with one → `.detached`, without → `.interrupted`.
+
+Neither question is answered here. An `if cursor != nil` in this file would
+agree with the store *by coincidence*, and the first refactor on either side
+would end the agreement without a test failing — which is exactly the failure
+mode three layers of defence exist to prevent.
+
+`.detached` reads the session as `.disconnected`, not `.error`. The turn is
+running fine on the host; the link is what is gone, and an error banner would be
+a lie about the work. `canSend` stays false either way, which is correct —
+starting a second turn while the first generates is the harm the amendment names.
+
+## Why `.detached` does not appear yet
+
+The cursor is threaded through the stream loop but is always `nil`, because
+`TransportEvent` is `.chunk` / `.completed` / `.failed` and none of the three
+carries a turn id or a `seq`. `.detached` is therefore not an unimplemented
+branch — it is a value the current seam **cannot express**. Same root cause
+keeps `TurnFailure` off the message: `.failed(LocalisError)` has nowhere to put
+`failed_at_ms` and `tool_calls_completed`, and filling them with zeros would
+fabricate "failed 0 minutes in" — the exact claim `TurnReconciliation` refuses
+to make.
+
+Both resolve the day the transport yields `SequencedEvent`: assigning the cursor
+is the whole change, because the settlement rule already reads it.
+
 ## Determinism
 
 `now` and `makeID` are injected closures. Tests pass fixed values; production

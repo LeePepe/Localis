@@ -71,6 +71,19 @@ public actor ChatService {
             Task { [repository, now] in
                 var current = withPlaceholder
                 var assistant = placeholder
+                // The resume point, advanced as sequenced frames arrive.
+                //
+                // Always `nil` today: `TransportEvent` is `.chunk` / `.completed`
+                // / `.failed`, and none of the three carries a turn id or a
+                // `seq`, so there is nothing to build a cursor out of. That is
+                // why `.detached` never appears yet — not an unimplemented
+                // branch, but a value the current seam cannot express.
+                //
+                // It is threaded through anyway so that the day the transport
+                // yields `SequencedEvent`, assigning here is the whole change:
+                // the settlement rule below already reads it, and `.detached`
+                // starts appearing without a second decision being made.
+                let cursor: TurnCursor? = nil
                 continuation.yield(current)
 
                 do {
@@ -113,12 +126,18 @@ public actor ChatService {
                     try await repository.save(current)
                     continuation.yield(current)
                 } catch {
-                    // Keep the partial text the user already read; mark it
-                    // failed so the UI can offer a retry.
-                    assistant = assistant.withStatus(.failed)
+                    // Keep the partial text the user already read, and settle
+                    // it by the one rule rather than assuming the worst: a
+                    // stream that dies under us is not automatically `.failed`.
+                    let reason = Self.localisError(from: error)
+                    let settled = Self.settledStatus(for: reason, cursor: cursor)
+                    assistant = assistant.withStatus(settled)
                     current = current
                         .replacing(assistant, at: now())
-                        .withStatus(.error(Self.localisError(from: error)), at: now())
+                        .withStatus(
+                            Self.sessionStatus(for: settled, reason: reason),
+                            at: now()
+                        )
                     try? await repository.save(current)
                     continuation.yield(current)
                 }
@@ -140,5 +159,50 @@ public actor ChatService {
     /// when the real cause is unknown.
     private static func localisError(from error: any Error) -> LocalisError {
         error as? LocalisError ?? .connectionLost
+    }
+
+    /// How a turn that broke mid-flight settles.
+    ///
+    /// Two questions, each answered by the one place that owns it:
+    ///
+    /// 1. **Is the break survivable at all?** `LocalisError.isRetryable` says.
+    ///    A revoked token and a dropped connection produce the same broken
+    ///    stream, but resuming the first only replays the refusal — no cursor
+    ///    rescues it, so it settles `.failed`.
+    /// 2. **Is a survivable break resumable?** `TurnReconciliation.resolve`
+    ///    says, from the cursor.
+    ///
+    /// Neither judgement is made here. Writing `if cursor != nil` in this file
+    /// would agree with the store by coincidence, and the first refactor on
+    /// either side would end the agreement silently — which is the failure mode
+    /// three layers of defence exist to avoid.
+    static func settledStatus(for reason: LocalisError, cursor: TurnCursor?) -> MessageStatus {
+        guard reason.isRetryable else { return .failed }
+
+        // `.streaming` is the honest input: the turn was mid-flight when the
+        // link died. The store reads that as "the process that owned this
+        // stream is gone", which is exactly what happened.
+        switch TurnReconciliation.resolve(state: .streaming, cursor: cursor) {
+        case .stillRunning:
+            return .detached
+        case .lost:
+            return .interrupted
+        case .settled, .failed:
+            // Unreachable from `.streaming`, and deliberately not folded into
+            // the cases above: a future `resolve` gaining a state should fail
+            // here loudly rather than settle a live turn as finished.
+            return .interrupted
+        }
+    }
+
+    /// What the conversation reads as once its turn settled.
+    ///
+    /// `.detached` is the case worth spelling out: the turn is running fine on
+    /// the host, so an `.error` banner would be a lie about the work. The link
+    /// is what is gone, so the session reads `.disconnected` — and `canSend`
+    /// stays false, which is correct, because starting a second turn while the
+    /// first generates is the precise harm Amendment C §1.5 exists to prevent.
+    static func sessionStatus(for settled: MessageStatus, reason: LocalisError) -> SessionStatus {
+        settled.isInFlight ? .disconnected : .error(reason)
     }
 }
