@@ -20,7 +20,10 @@ let package = Package(
         ),
         .testTarget(
             name: "LocalisUITests",
-            dependencies: ["LocalisUI"],
+            // `ChatService` is already this package's dependency; the test
+            // target names it so the seam between its session mapping and this
+            // layer's wording can be asserted rather than restated.
+            dependencies: ["LocalisUI", "ChatService"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         )
     ]

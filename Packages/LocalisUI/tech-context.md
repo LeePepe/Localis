@@ -125,13 +125,26 @@ moment when work may still be running on the user's Mac, and is written for it:
 it offers reading, and says nothing about the reply having ended. "This reply was
 lost" would be a lie in exactly the case background resume exists for.
 
-That mapping is `internal` to another module, so nothing mechanical connects the
-two. `core` has a test that fails if the mapping changes and has undertaken to
-say so first; but rewording the string on this side fails nothing there. So the
-exact copy is pinned by test here, purely to put a reader in the way of the
-assumption before they change it. It is the weakest of the three defences and
-the only one this layer can build alone — if the constraint ever moves into a
-shared type, the pin should go.
+The two sides were written independently and agreed by coincidence. That is now
+asserted rather than hoped for: `core` made `ChatService.sessionStatus` public so
+this layer could test against the real mapping instead of restating it, and
+`ChatServiceContractTests` walks the whole chain — `.detached` → `.disconnected`
+→ the sentence the user reads — plus the other branch, where a settled failure
+becomes `.error` and says what went wrong. Both branches are pinned as
+*distinguishable*, because a still-running turn and a dead one reading the same
+is the confusion Amendment C §1.5 split the states to prevent.
+
+The mapping test quantifies over `isInFlight` rather than naming `.detached`,
+since that is what `sessionStatus` actually branches on; pinning the one case
+would leave the other two free to drift.
+
+`ComposerStateTests` keeps a narrower pin on the exact string. It catches what
+the contract test cannot: rewording *this sentence* breaks no mapping. Verified
+by mutation — changing it to "This reply was lost." fails two assertions.
+
+Obligations run both ways here and neither has a compiler behind it: `core` says
+before it changes the mapping, this layer says before it changes what the wording
+means.
 
 ## Empty vs. failed
 

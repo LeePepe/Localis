@@ -3,6 +3,7 @@ import Testing
 
 @testable import LocalisUI
 
+import ChatService
 import LocalisModels
 
 /// FR-053: a session that cannot deliver must refuse input *visibly*, rather
@@ -54,14 +55,16 @@ struct ComposerStateTests {
     }
 
     @Test("every blocked state says why, in words")
-    func blockedStatesExplainThemselves() {
+    func blockedStatesExplainThemselves() throws {
         let blocked: [SessionStatus] = [
             .disconnected, .connecting, .streaming, .orphaned, .error(.unreachable)
         ]
         for status in blocked {
-            let reason = ComposerState.make(from: Self.session(status)).blockedReason
-            let text = try? #require(reason)
-            #expect(text?.isEmpty == false, "\(status) blocked with no explanation")
+            let reason = try #require(
+                ComposerState.make(from: Self.session(status)).blockedReason,
+                "\(status) blocked with no explanation"
+            )
+            #expect(reason.isEmpty == false, "\(status)")
         }
     }
 
@@ -112,15 +115,10 @@ struct ComposerStateTests {
         // written accordingly: it offers reading, and says nothing about the
         // reply having ended.
         //
-        // The mapping lives in another module and is `internal`, so nothing
-        // mechanical ties the two together: `core` has a test that fails if it
-        // changes the mapping, but *rewording this string* fails nothing. A
-        // rewrite to "This reply was lost." would pass every other test here
-        // and tell the user their still-running turn is dead.
-        //
-        // Pinning the exact string is the weakest of the three defences, and it
-        // is what this layer can do alone: change the words and you land here,
-        // and read why they were chosen. If it ever becomes a type, delete this.
+        // `ChatServiceContractTests` now holds the mapping itself, so a change
+        // on that side lands there. This one is narrower and still worth
+        // keeping: rewording *this string* to "This reply was lost." breaks no
+        // mapping and would otherwise pass everything.
         let reason = ComposerState.make(from: Self.session(.disconnected)).blockedReason
 
         #expect(reason == "This Mac isn't reachable. You can still read the conversation.")
