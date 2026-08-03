@@ -115,6 +115,12 @@ Targets are defined in `project.yml`. Re-run `xcodegen generate` after changing
 target config. `Localis/Sources/` and `LocalisTests/` are directory source
 references — new files are picked up automatically.
 
+`Localis.xcodeproj` is a **generated artifact and is never committed** — it is
+gitignored on purpose. Both the CI app job and `fastlane ios beta` run
+`xcodegen generate` before building, so git never needs it. Do not "helpfully"
+add it back: a tracked `.pbxproj` drifts from `project.yml` and turns every PR
+into a merge-conflict review. If it is missing locally, regenerate it.
+
 ## Hooks
 
 ```bash
