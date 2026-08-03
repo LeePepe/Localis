@@ -80,8 +80,19 @@ public actor ChatService {
                             assistant = assistant.appending(text)
                         case .completed:
                             assistant = assistant.withStatus(.complete)
-                        case .failed:
+                        case .failed(let reason):
+                            // Bind the reason. A bare `case .failed:` compiles
+                            // and silently discards it, leaving the user with
+                            // "Error" and no way to tell a revoked token from
+                            // a dropped connection.
                             assistant = assistant.withStatus(.failed)
+                            current = current
+                                .replacing(assistant, at: now())
+                                .withStatus(.error(reason), at: now())
+                            try? await repository.save(current)
+                            continuation.yield(current)
+                            continuation.finish()
+                            return
                         }
                         current = current.replacing(assistant, at: now())
                         try await repository.save(current)
@@ -92,19 +103,42 @@ public actor ChatService {
                     if assistant.status == .streaming {
                         assistant = assistant.withStatus(.complete)
                         current = current.replacing(assistant, at: now())
-                        try await repository.save(current)
-                        continuation.yield(current)
                     }
+                    // A turn that finished clears any error the previous one
+                    // left behind. Without this, one bad turn marks the
+                    // conversation broken for good: `canSend` stays false and
+                    // the composer refuses input on a session that works
+                    // (FR-053).
+                    current = current.withStatus(.idle, at: now())
+                    try await repository.save(current)
+                    continuation.yield(current)
                 } catch {
-                    // Keep the partial text the user already read; mark it failed
-                    // so the UI can offer a retry.
+                    // Keep the partial text the user already read; mark it
+                    // failed so the UI can offer a retry.
                     assistant = assistant.withStatus(.failed)
-                    current = current.replacing(assistant, at: now())
+                    current = current
+                        .replacing(assistant, at: now())
+                        .withStatus(.error(Self.localisError(from: error)), at: now())
                     try? await repository.save(current)
                     continuation.yield(current)
                 }
                 continuation.finish()
             }
         }
+    }
+
+    /// Maps anything thrown out of the transport into the one error vocabulary.
+    ///
+    /// `AgentTransport` conformers are required to map their own failures
+    /// before they escape, so a foreign error arriving here means that rule was
+    /// broken somewhere upstream. It still must not get past this layer: a
+    /// `URLError` reaching the UI renders as text no user can read, and its
+    /// description can carry a full endpoint (constitution I).
+    ///
+    /// `connectionLost` is the honest fallback — the turn did stop mid-flight,
+    /// and it is the reading that stays retryable, which is the safe answer
+    /// when the real cause is unknown.
+    private static func localisError(from error: any Error) -> LocalisError {
+        error as? LocalisError ?? .connectionLost
     }
 }
