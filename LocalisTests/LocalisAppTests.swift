@@ -3,6 +3,7 @@ import Testing
 
 @testable import Localis
 
+import ChatService
 import LocalisModels
 import LocalisUI
 import SessionStore
@@ -57,6 +58,22 @@ struct LocalisAppTests {
             createdAt: t0,
             updatedAt: t0,
             status: status
+        )
+    }
+
+    /// A detail model wired the way `SessionDetailView` wires one.
+    ///
+    /// The transport is the app's own `EchoTransport` rather than a test double.
+    /// Substituting a tidier fake here would test a `ChatService` this app never
+    /// builds — and the point of this suite is the assembly as it ships.
+    private static func detailModel(
+        repository: any SessionRepository,
+        sessionID: UUID
+    ) async -> SessionDetailModel {
+        await SessionDetailModel(
+            repository: repository,
+            sessionID: sessionID,
+            service: ChatService(transport: EchoTransport(), repository: repository)
         )
     }
 
@@ -158,7 +175,7 @@ struct LocalisAppTests {
             )
         )
 
-        let model = await SessionDetailModel(repository: repository, sessionID: id)
+        let model = await Self.detailModel(repository: repository, sessionID: id)
         await model.load()
 
         #expect(await model.messages.map(\.text) == ["first", "second"])
@@ -176,7 +193,7 @@ struct LocalisAppTests {
     func deletedSessionIsNamedNotBlank() async throws {
         let repository = InMemorySessionRepository()
 
-        let model = await SessionDetailModel(repository: repository, sessionID: UUID())
+        let model = await Self.detailModel(repository: repository, sessionID: UUID())
         await model.load()
 
         #expect(await model.loadError != nil)
@@ -184,5 +201,122 @@ struct LocalisAppTests {
         // The composer must not be offered for a session that is not there:
         // rendering one would invite a reply into nothing.
         #expect(await model.composer == nil)
+    }
+
+    /// FR-029 on the *send* path, which is a separate lookup from the list's.
+    ///
+    /// `SessionListModel` and `SessionDetailModel` resolve backends
+    /// independently, so fixing one leaves the other free to be host-blind. The
+    /// list getting the name right and the detail screen routing to the wrong
+    /// machine is not a contradiction the app would notice — the reply would
+    /// arrive looking entirely normal, from a different computer.
+    @Test("the session routes to the backend on its own host, not a same-named one elsewhere")
+    func detailResolvesBackendOnItsOwnHost() async throws {
+        let studio = HostID()
+        let laptop = HostID()
+        let id = UUID()
+        let repository = try await Self.seeded(
+            (
+                studio,
+                AgentBackend(id: "claude", displayName: "Studio Claude"),
+                Self.session(host: studio, backendID: "claude", title: "On the studio")
+            ),
+            (
+                laptop,
+                AgentBackend(id: "claude", displayName: "Laptop Claude"),
+                Self.session(id: id, host: laptop, backendID: "claude", title: "On the laptop")
+            )
+        )
+
+        let model = await Self.detailModel(repository: repository, sessionID: id)
+        await model.load()
+
+        #expect(await model.backend?.displayName == "Laptop Claude")
+        #expect(await model.sendBlockedReason == nil)
+    }
+
+    /// A session whose host is no longer paired is readable but not sendable.
+    ///
+    /// Both halves are asserted because either alone is a different, wrong
+    /// product: a blocked composer with the transcript hidden loses history the
+    /// user still owns (FR-036), and a readable transcript with an unblocked
+    /// composer accepts a message that has nowhere to go.
+    @Test("a session whose agent is gone keeps its transcript and says why it can't send")
+    func missingBackendBlocksSendingButKeepsTranscript() async throws {
+        let host = HostID()
+        let id = UUID()
+        let repository = InMemorySessionRepository()
+        // Deliberately no `save(backend:on:)`: the host answers with no backends,
+        // which is what an unpaired machine looks like from here.
+        try await repository.create(
+            Self.session(
+                id: id,
+                host: host,
+                backendID: "claude",
+                messages: [
+                    Message(id: UUID(), role: .user, text: "still here", createdAt: Self.t0)
+                ]
+            )
+        )
+
+        let model = await Self.detailModel(repository: repository, sessionID: id)
+        await model.load()
+
+        #expect(await model.messages.map(\.text) == ["still here"])
+        #expect(await model.backend == nil)
+        #expect(await model.sendBlockedReason != nil)
+    }
+
+    /// Submitting with no backend surfaces a reason instead of doing nothing.
+    ///
+    /// Silence is the failure mode that matters: a send button that swallows the
+    /// message is indistinguishable from a slow reply, so the user waits, then
+    /// retypes.
+    ///
+    /// **Submitted without `load()` first, and that is what makes this a test of
+    /// `submit`.** An earlier version loaded first and asserted the same thing —
+    /// and stayed green when `submit` was mutated to `guard let backend else
+    /// { return }`, because `load` had already set the reason. It was named for
+    /// `submit` and was measuring `load`. Skipping `load` leaves
+    /// `sendBlockedReason` genuinely nil going in, so only `submit` can set it.
+    ///
+    /// This also pins the one path on which `submit`'s own fallback string is
+    /// reachable at all — see the note to `core`: after a completed `load`, that
+    /// `??` branch is dead.
+    @Test("submitting with no backend says why rather than silently dropping the message")
+    func submitWithoutBackendSurfacesReason() async throws {
+        let host = HostID()
+        let id = UUID()
+        let repository = InMemorySessionRepository()
+        try await repository.create(Self.session(id: id, host: host, backendID: "claude"))
+
+        let model = await Self.detailModel(repository: repository, sessionID: id)
+        #expect(await model.sendBlockedReason == nil, "precondition: nothing has explained anything yet")
+
+        await model.submit("does this go anywhere")
+
+        #expect(await model.sendBlockedReason != nil)
+        // The dropped message must not appear in the transcript: showing it
+        // would claim it was sent.
+        #expect(await model.messages.isEmpty)
+    }
+
+    /// After `load`, a session with no backend explains itself.
+    ///
+    /// Split out from the test above because the two failures are different
+    /// mechanisms — this one is `resolveBackend` doing its job, that one is
+    /// `submit` doing its own. Asserting both through one call is how the
+    /// earlier version came to be named for the mechanism it was not testing.
+    @Test("a loaded session with no backend has already said why it can't send")
+    func loadedSessionWithoutBackendExplainsItself() async throws {
+        let host = HostID()
+        let id = UUID()
+        let repository = InMemorySessionRepository()
+        try await repository.create(Self.session(id: id, host: host, backendID: "claude"))
+
+        let model = await Self.detailModel(repository: repository, sessionID: id)
+        await model.load()
+
+        #expect(await model.sendBlockedReason != nil)
     }
 }
