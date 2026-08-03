@@ -1,6 +1,7 @@
 import Foundation
 import LocalisModels
 import SessionStore
+import TransportKit
 
 /// Writes a small transcript into the real store, for screenshots only.
 ///
@@ -52,8 +53,15 @@ enum DemoSeed {
     static func populateIfEmpty(_ repository: any SessionRepository) async {
         do {
             guard try await repository.allSessions().isEmpty else { return }
+            let credentials = HostCredentialStore()
             for host in hostFixtures() {
                 try await repository.save(host)
+                // The pin goes to the Keychain, not into the record — the same
+                // split the real pairing flow makes, and the only way a seeded
+                // machine can come back connectable.
+                if let pin = host.pinnedSPKI {
+                    try credentials.savePin(pin, for: host.id)
+                }
             }
             for (host, backend, session) in fixtures() {
                 try await repository.save(backend, on: host)
@@ -73,17 +81,16 @@ enum DemoSeed {
     /// `hosts()`. Handing `RootView` a hardcoded array would photograph the
     /// strip rather than the persistence, and persistence is the whole of B-1.
     ///
-    /// **The pin passed here does not survive, and that is the store's
-    /// contract, not a bug.** `SessionStore` has no pin column — the Keychain
-    /// is the only owner of a trust anchor — so both machines come back with
-    /// `canConnect == false` and both pills render in the neutral tone. Until
-    /// the composition point joins these records to their Keychain pins, no
-    /// host in the app can be connectable, and a seed that appeared to produce
-    /// one would be showing something the real app cannot do.
+    /// **The pin on "Studio" does not go into the store, and that is the
+    /// point.** `SessionStore` has no pin column — the Keychain is the only
+    /// owner of a trust anchor — so `save(_ host:)` drops it, and
+    /// `populateIfEmpty` writes it to the Keychain separately. A machine that
+    /// comes back connectable therefore proves the two halves were rejoined on
+    /// read (`HostAssembly`); it cannot be produced by the store alone.
     ///
-    /// The two states still earn their place: they differ in `pairingState`,
-    /// so a projection that lost the state on the way to disk shows two
-    /// identical rows instead of "Paired" and "Not paired".
+    /// That is also why the two fixtures differ in more than wording: "Studio"
+    /// exercises the join, "MacBook Air" has no pin at all, so a screenshot in
+    /// which both pills look alike means the join is not running.
     private static func hostFixtures() -> [LocalisHost] {
         [
             LocalisHost(
