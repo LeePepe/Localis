@@ -168,8 +168,16 @@ struct LocalisAppTests {
                     host: host,
                     backendID: "claude",
                     messages: [
+                        // Distinct timestamps, deliberately. `StoredMapping`
+                        // orders by `createdAt`, so two messages sharing one
+                        // leave the order down to whatever the fetch happens to
+                        // return — and this test asserts a strict sequence.
+                        // It passed locally either way; that was luck, not a
+                        // property. store hit the identical shape in its
+                        // migration test: green three runs in a row, red on the
+                        // first pre-commit hook.
                         Message(id: UUID(), role: .user, text: "first", createdAt: Self.t0),
-                        Message(id: UUID(), role: .assistant, text: "second", createdAt: Self.t0)
+                        Message(id: UUID(), role: .assistant, text: "second", createdAt: Self.t0.addingTimeInterval(1))
                     ]
                 )
             )
