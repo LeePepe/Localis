@@ -94,12 +94,15 @@ jobs:
         run: bash scripts/check-frontmatter.sh
       # The self-test runs first and is not redundant: a wiring check that has
       # quietly become incapable of failing is worse than no check at all,
-      # because its green tells the next person the assembly is sound.
+      # because its green tells the next person the assembly is sound. It
+      # covers all four ways this check has been fed a false answer — never
+      # imported, imported-but-unused, named only in a comment, and reporting
+      # a problem unconditionally.
       - name: Wiring check can still fail
         run: bash scripts/check-wiring.sh --self-test
       # RED ON PURPOSE until the assembly layer lands (#16). `project.yml`
-      # declares ChatService / TransportKit / SkillsKit under the app target
-      # and no file under Localis/Sources/ imports any of them.
+      # declares SkillsKit under the app target and nothing imports it, and
+      # TransportKit is imported without a single one of its types being used.
       #
       # `continue-on-error` because this reports a known, tracked gap rather
       # than a regression introduced by the commit under test — blocking every

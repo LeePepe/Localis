@@ -47,17 +47,19 @@ if echo "$STAGED" | grep -q 'tech-context\.md$'; then
   fi
 fi
 
-# ---- 2b. Wiring: the app target must import what project.yml declares -------
+# ---- 2b. Wiring: the app target must really use what project.yml declares ---
 #
-# Only when the app target or its build config is staged — a commit touching
-# only Packages/ cannot change this answer.
+# Runs when the app target or its build config is staged — a commit touching
+# only Packages/ cannot change that answer — and also when the check itself is
+# staged, because an edit to the checker is exactly when its self-test matters
+# most and the path filter would otherwise skip it.
 #
 # Advisory, not blocking, and deliberately so: the check is RED today (#16),
 # so a blocking version would refuse every commit including the ones that fix
 # it. The self-test *is* blocking, because a check that can no longer fail is
 # the failure this whole exercise exists to prevent.
 
-if echo "$STAGED" | grep -qE '^(Localis/|project\.yml$)'; then
+if echo "$STAGED" | grep -qE '^(Localis/|project\.yml$|scripts/check-wiring\.sh$)'; then
   if [ -x scripts/check-wiring.sh ]; then
     if ! bash scripts/check-wiring.sh --self-test >/dev/null; then
       echo "❌ scripts/check-wiring.sh can no longer detect an unwired package."
