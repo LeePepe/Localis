@@ -1,9 +1,50 @@
+# macOS
 .DS_Store
-.build/
+.Trashes
+
+# Xcode — Localis.xcodeproj is GENERATED from project.yml by xcodegen and is
+# never committed. Both the CI app job and `fastlane ios beta` run
+# `xcodegen generate` before building, so the artifact never needs to be in git.
+# (This diverges from VitalStride, which tracks its project file.)
+Localis.xcodeproj/
+build/
 DerivedData/
+*.xcuserdata
+xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcworkspace/xcuserdata/
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.build/
+Packages/*/.build/
+Packages/*/.swiftpm/
+.swiftpm/
+Package.resolved
+
+# IDE
+*.swp
+*~
+.idea/
+.vscode/
+
+# fastlane artifacts + App Store Connect API key (never commit the .p8)
 fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output/
+AuthKey_*.p8
 fastlane/*.p8
+
+# Signing material — never commit provisioning profiles
+*.mobileprovision
+AppStore_*.mobileprovision
+
+# Secrets
 .env
+.env.*
+
+# Local dev-only scripts (personal device names / UDIDs — not shipped)
 local/

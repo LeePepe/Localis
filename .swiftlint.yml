@@ -1,0 +1,53 @@
+included:
+  - Localis
+  - Packages
+
+excluded:
+  - .git
+  - LocalisTests
+  - Packages/*/.build
+  - Packages/*/Tests
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rule policy: an `only_rules` whitelist — enable only high-signal rules that
+# point at real defects.
+#
+# The full standard set brings in style noise with poor signal: identifier_name
+# (single letters are correct in color/math code), line_length, large_tuple,
+# trailing_comma. Narrowing or widening the gate means editing this list.
+# ─────────────────────────────────────────────────────────────────────────────
+
+only_rules:
+  # ── Real defects, built-in rules ──
+  - force_unwrapping          # dangerous force unwrap
+  - force_try
+  - force_cast
+  - empty_count               # .count == 0 → isEmpty
+  - empty_string
+  - first_where               # collection/optional safety + readability
+  - last_where
+  - contains_over_first_not_nil
+  - sorted_first_last
+  # ── Project-specific (see custom_rules below) ──
+  - empty_catch
+  - hardcoded_hex_color_in_ui
+
+custom_rules:
+  empty_catch:
+    name: "Empty catch swallows errors"
+    message: "An empty catch{} silently drops the error. At minimum log it, or set an error state that drives a UI fallback. Every wire failure must map to LocalisError — see Packages/TransportKit/tech-context.md"
+    regex: '\}\s*catch\s*\{\s*\}'
+    severity: warning
+    excluded:
+      - ".*Tests/.*"
+      - ".*Tests\\.swift"
+
+  hardcoded_hex_color_in_ui:
+    name: "Hardcoded color outside DesignKit"
+    message: "Colors come from @Environment(\\.theme). A hex literal outside DesignKit is a design-system leak — see Packages/DesignKit/tech-context.md"
+    regex: 'Color\(hex:\s*"'
+    severity: warning
+    excluded:
+      - "Packages/DesignKit/.*"
+      - ".*Tests/.*"
+      - ".*Tests\\.swift"

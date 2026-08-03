@@ -1,0 +1,99 @@
+#!/bin/bash
+# Localis pre-commit hook
+#
+# 1. SwiftLint the staged Swift files (fast — no build)
+# 2. Incremental per-layer discovery: swift build + test for each touched
+#    Packages/<X> (seconds each). App-target / docs-only changes skip this.
+# 3. Frontmatter anti-rot check when any tech-context.md is staged.
+#
+# This is the fast inner-loop subset, scoped to the layers you actually touched.
+# CI runs the full matrix (all packages + the app target).
+#
+# Enable with:  git config core.hooksPath scripts/hooks
+
+set -uo pipefail
+
+REPO="$(git rev-parse --show-toplevel)"; cd "$REPO"
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)
+[ -z "$STAGED" ] && exit 0
+
+# ---- 1. SwiftLint staged Swift files ----------------------------------------
+
+if command -v swiftlint >/dev/null 2>&1; then
+  STAGED_SWIFT=$(echo "$STAGED" | grep -E '\.swift$' || true)
+  if [ -n "$STAGED_SWIFT" ]; then
+    LINT_ARGS=()
+    while IFS= read -r file; do
+      [ -f "$file" ] && LINT_ARGS+=("$file")
+    done <<< "$STAGED_SWIFT"
+    if [ ${#LINT_ARGS[@]} -gt 0 ]; then
+      if ! swiftlint lint --quiet --strict -- "${LINT_ARGS[@]}"; then
+        echo "❌ SwiftLint errors in staged files. Commit aborted."
+        exit 1
+      fi
+    fi
+  fi
+fi
+
+# ---- 2. Frontmatter anti-rot (only when a tech-context.md is staged) --------
+
+if echo "$STAGED" | grep -q 'tech-context\.md$'; then
+  if [ -x scripts/check-frontmatter.sh ]; then
+    if ! bash scripts/check-frontmatter.sh; then
+      echo "❌ tech-context.md frontmatter is out of sync. Commit aborted."
+      exit 1
+    fi
+  fi
+fi
+
+# ---- 3. Incremental per-layer swift build + test ----------------------------
+# Map staged paths → touched Packages/<X> layers, then build+test each.
+# Fast (SPM, no simulator). Untouched layers are never built.
+
+command -v swift >/dev/null 2>&1 || exit 0
+
+TOUCHED_LAYERS=$(echo "$STAGED" \
+  | grep -E '^Packages/[^/]+/' \
+  | sed -E 's|^Packages/([^/]+)/.*|\1|' \
+  | sort -u || true)
+
+[ -z "$TOUCHED_LAYERS" ] && exit 0
+
+# Guard: many touched layers × per-layer build+test breaks the "fast" promise.
+# Above the cap, build only — CI still runs the full test matrix.
+LAYER_COUNT=$(echo "$TOUCHED_LAYERS" | sed '/^$/d' | wc -l | tr -d ' ')
+MAX_TEST_LAYERS=3
+RUN_TESTS=true
+if [ "$LAYER_COUNT" -gt "$MAX_TEST_LAYERS" ]; then
+  RUN_TESTS=false
+  echo "⚠️  ${LAYER_COUNT} layers touched (>${MAX_TEST_LAYERS}): pre-commit builds only; CI runs the tests."
+fi
+
+FAIL=0
+while IFS= read -r pkg; do
+  [ -z "$pkg" ] && continue
+  [ -d "Packages/$pkg" ] || continue
+  LOG=$(mktemp)
+
+  echo "🔨 swift build [$pkg]"
+  if ! swift build --package-path "Packages/$pkg" > "$LOG" 2>&1; then
+    echo "❌ swift build failed [$pkg]"; tail -20 "$LOG"; FAIL=1; rm -f "$LOG"; continue
+  fi
+
+  if [ "$RUN_TESTS" = true ]; then
+    echo "🧪 swift test  [$pkg]"
+    if ! swift test --package-path "Packages/$pkg" > "$LOG" 2>&1; then
+      echo "❌ swift test failed [$pkg]"; tail -30 "$LOG"; FAIL=1
+    fi
+  fi
+  rm -f "$LOG"
+done <<< "$TOUCHED_LAYERS"
+
+if [ "$FAIL" -ne 0 ]; then
+  echo ""
+  echo "❌ Layer build/test failed. Commit aborted (don't --no-verify; CI blocks it anyway)."
+  exit 1
+fi
+
+echo "✅ pre-commit: touched layer(s) build/test passed."
