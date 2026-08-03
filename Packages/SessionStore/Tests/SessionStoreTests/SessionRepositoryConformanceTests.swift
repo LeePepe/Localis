@@ -90,6 +90,29 @@ struct SessionRepositoryConformanceTests {
         #expect(Self.hostB.isUnattributed == false)
     }
 
+    /// A paired machine, optionally carrying a pin.
+    ///
+    /// The pin is a parameter rather than always-nil so a test can hand the
+    /// store a fully-composed host — pin included — and assert the pin does not
+    /// come back. A fixture that could not carry one would make "the pin is
+    /// dropped" unfalsifiable.
+    ///
+    /// The value is an obvious non-secret: this repository is public, and a
+    /// string that looked like a real base64 SPKI hash would be a thing future
+    /// readers have to check rather than recognise.
+    private static func pairedHost(id: HostID, pin: SPKIHash?) -> LocalisHost {
+        LocalisHost(
+            id: id,
+            displayName: "A Mac",
+            endpoint: HostEndpoint(host: "example.invalid", port: 8443),
+            bridgeID: "bridge",
+            pinnedSPKI: pin,
+            pairingState: .paired,
+            protocolVersion: 1,
+            kind: .other
+        )
+    }
+
     private static func session(
         id: UUID = UUID(),
         hostID: HostID = hostA,
@@ -675,5 +698,81 @@ struct SessionRepositoryConformanceTests {
 
         let stored = try #require(try await repository.session(id: id))
         #expect(stored.messages.isEmpty, "\(implementation) kept a deleted message")
+    }
+
+    // MARK: - Single-host lookup
+
+    /// **`host(id:)` never hands back a pin, on either implementation.**
+    ///
+    /// `hosts()` was already guarded, `host(id:)` was not, and the gap matters
+    /// because of which one the app calls: the list renders the picker, but the
+    /// single lookup is what a connection attempt goes through. A pin leaking
+    /// from the lookup would make `canConnect` true on a host the Keychain never
+    /// vouched for — the exact fact M4's surviving mutant proved nothing was
+    /// asserting about.
+    ///
+    /// Probed on both before being written: neither diverges today. That makes
+    /// this a regression guard rather than a bug fix, and it is worth having for
+    /// the same reason the `ReadPath` cross-product was — one promise reachable
+    /// by two paths, with only one of them under test, is a promise about the
+    /// path nobody exercised.
+    @Test(
+        "a single-host lookup never carries a pin",
+        arguments: implementations
+    )
+    func hostLookupCarriesNoPin(_ implementation: Implementation) async throws {
+        let repository = try implementation.make()
+        let paired = Self.pairedHost(id: Self.hostA, pin: SPKIHash(base64: "not-a-real-pin"))
+
+        try await repository.save(paired)
+        let found = try #require(try await repository.host(id: Self.hostA))
+
+        #expect(
+            found.pinnedSPKI == nil,
+            "\(implementation) returned a pin from the table; the Keychain is the only anchor"
+        )
+        #expect(
+            found.canConnect == false,
+            "\(implementation) made a stored host connectable without the composition point"
+        )
+        #expect(
+            found.pairingState == .paired,
+            "\(implementation) lost the pairing state, which the table *is* meant to hold"
+        )
+    }
+
+    /// A machine that was never saved is absent, not a placeholder.
+    ///
+    /// Paired with the test above so "never carries a pin" cannot be satisfied
+    /// by a lookup that returns nothing at all: one asserts the hit, this one
+    /// asserts the miss.
+    @Test(
+        "looking up an unknown machine finds nothing",
+        arguments: implementations
+    )
+    func unknownHostLookupIsNil(_ implementation: Implementation) async throws {
+        let repository = try implementation.make()
+        try await repository.save(Self.pairedHost(id: Self.hostA, pin: nil))
+
+        let found = try await repository.host(id: Self.hostB)
+
+        #expect(found == nil, "\(implementation) invented a machine it was never given")
+    }
+
+    /// The "no machine" marker is never a machine.
+    ///
+    /// `save` refuses it, so a lookup must not find one either — otherwise a
+    /// legacy session's `.unattributed` id would resolve to something tappable
+    /// in the UI, which is exactly what `UnattributedHost` exists to prevent.
+    @Test(
+        "the no-machine marker resolves to no machine",
+        arguments: implementations
+    )
+    func unattributedHostLookupIsNil(_ implementation: Implementation) async throws {
+        let repository = try implementation.make()
+
+        let found = try await repository.host(id: .unattributed)
+
+        #expect(found == nil, "\(implementation) resolved .unattributed to a host")
     }
 }
