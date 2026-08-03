@@ -141,9 +141,9 @@ struct AgentBackendTests {
     }
 }
 
-@Suite("LocalisError")
-struct LocalisErrorTests {
-    @Test("every error carries a user-facing message")
+@Suite("LocalisError baseline")
+struct LocalisErrorBaselineTests {
+    @Test("the original error vocabulary still carries user-facing text")
     func allErrorsHaveUserMessages() {
         let cases: [LocalisError] = [
             .unreachable, .connectionLost, .malformedResponse,

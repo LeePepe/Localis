@@ -10,10 +10,11 @@ red_lines:
   - `LocalisError.userMessage` must never contain endpoints, tokens, or raw payloads — it is rendered to the user verbatim.
   - No credential field on any entity. The pairing token lives in the Keychain, keyed by `HostID`, and is never modelled here.
   - `HostRuntimeState` is deliberately not `Codable` — reachability and latency are derived, never persisted.
+  - The bridge's own `error.message` is never carried into `LocalisError` — it may contain absolute paths. UI text is derived locally from the code.
 roles:
-  Types: [LocalisHost, HostRuntimeState, HostRecognition, AgentBackend, BackendRef, Message, Session, SkillDescriptor, LocalisError]
+  Types: [LocalisHost, HostRuntimeState, HostRecognition, AgentBackend, BackendRef, Message, Session, TurnCursor, SkillDescriptor, LocalisError]
 test: swift test --package-path Packages/LocalisModels
-owns: [LocalisHost, HostID, HostEndpoint, SPKIHash, HostPairingState, HostKind, HostRuntimeState, HostReachability, HostUnreachableReason, HostRecognition, AgentBackend, BackendRef, Message, MessageRole, MessageStatus, Session, SessionStatus, SkillDescriptor, LocalisError]
+owns: [LocalisHost, HostID, HostEndpoint, SPKIHash, HostPairingState, HostKind, HostRuntimeState, HostReachability, HostUnreachableReason, HostRecognition, AgentBackend, BackendAvailability, BackendRef, Message, MessageRole, MessageStatus, Session, SessionStatus, TurnCursor, SkillDescriptor, LocalisError]
 ---
 
 # LocalisModels Context
@@ -34,6 +35,7 @@ asymmetry is deliberate — it is what keeps the dependency graph acyclic.
 | `BackendRef` | The composite key `(hostID, backendID)` that names a backend across hosts (FR-029) |
 | `Message` | One turn: role, text, timestamp, delivery status |
 | `Session` | A conversation bound to one host; holds the transcript |
+| `TurnCursor` | Resume cursor `(turnID, lastSeq)` for an in-flight turn (Amendment C) |
 | `SkillDescriptor` | A prompt template the input bar can insert (Amendment B) |
 | `LocalisError` | The single error vocabulary all layers map into |
 
@@ -103,6 +105,25 @@ Each layer maps its own failures into `LocalisError` **at its boundary**, so the
 UI has exactly one vocabulary to render. `URLError`, decoding errors, and file
 errors must never escape their layer.
 
+Every error code in contract §6 has a case here, because the contract forbids
+showing the bridge's own `error.message` (it may contain absolute paths,
+constitution I). A code with no case would have nowhere to get its wording from
+but the wire. `LocalisError.isRetryable` encodes which failures a retry can
+actually change: a certificate mismatch and a turn belonging to another device
+are not among them.
+
 `LocalisError` is `Codable` because `SessionStatus.error` is persisted with the
 session: a conversation that ended in failure should still read as failed after
 a relaunch, rather than silently coming back as idle.
+
+## Resume cursor
+
+`TurnCursor` is `(turnID, lastSeq)`. `lastSeq` is `Int?` rather than defaulting
+to `0` or `-1`: `seq` counts from 0 per turn, so the first would silently skip
+event 0 and the second would be a sentinel pretending to be a sequence number.
+
+`resumeFrom` is the *last accepted* seq, not the next wanted one — the bridge
+replays from `seq + 1`, so the other choice would skip exactly one frame.
+`advanced(to:)` never moves backwards, because after a resume the old connection
+can still deliver a late frame.
+
