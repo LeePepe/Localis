@@ -691,27 +691,81 @@ struct ChatServiceDetachmentTests {
         #expect(status.isRetryable)
     }
 
+    /// Every `LocalisError`, both sides of `isRetryable`.
+    ///
+    /// Hand-written because `LocalisError` has associated values and so cannot
+    /// be `CaseIterable`. That is a real weakness — a case added upstream is not
+    /// added here by the compiler — so `everyErrorIsSampled` below counts this
+    /// list against the vocabulary rather than trusting it stays complete.
+    static let allErrors: [LocalisError] = [
+        .unreachable, .connectionLost, .malformedResponse, .unauthorized,
+        .invalidInput(field: "message"), .cancelled, .tokenRevoked,
+        .unknownBackend, .sessionBusy, .backendUnavailable(reason: nil),
+        .protocolUpgradeRequired(side: .app), .turnExpired, .unknownTurn,
+        .turnNotYours, .certificatePinMismatch, .truncated,
+    ]
+
     @Test("the settled status agrees with the store's retry verdict, by derivation")
     func retryabilityAgreesWithTheStore() {
-        // The point store made and I am applying to my own layer: three layers
-        // of defence only mean anything if they are all derived from one rule.
-        // This asserts the agreement directly instead of trusting that two
-        // hand-written switches happen to line up.
-        let cases: [(LocalisError, TurnCursor?)] = [
-            (.connectionLost, TurnCursor(turnID: "t-1", lastSeq: 0)),
-            (.connectionLost, nil),
-            (.unreachable, TurnCursor(turnID: "t-2", lastSeq: 7)),
-            (.truncated, nil),
-        ]
+        // Three layers of defence only mean anything if they are all derived
+        // from one rule, so this asserts the agreement directly instead of
+        // trusting that two hand-written switches happen to line up.
+        //
+        // The sampling matters as much as the assertion. Four hand-picked pairs
+        // used to stand here, and they hid what the cross-product makes plain:
+        // the two sides do *not* agree in general, because they are not asked
+        // the same question. `resolve` never sees the error at all — it reasons
+        // from the cursor alone. So the agreement holds exactly where this layer
+        // has already decided the break is survivable, and the guard is what
+        // makes the two comparable rather than an accident that they match.
+        //
+        // Below that guard is the other half, asserted rather than left
+        // implicit: an unretryable error settles `.failed` *whatever* the cursor
+        // says. That is the case the old sample list never contained in both
+        // cursor states, and it is the one where deferring to `resolve` would be
+        // wrong — a revoked token with a resume point is still a revoked token.
+        let cursors: [TurnCursor?] = [nil, TurnCursor(turnID: "t-1", lastSeq: 0)]
 
-        for (error, cursor) in cases {
-            let verdict = TurnReconciliation.resolve(state: .streaming, cursor: cursor)
-            let status = ChatService.settledStatus(for: error, cursor: cursor)
-            #expect(
-                status.isRetryable == verdict.allowsRetry,
-                "\(error) with cursor \(String(describing: cursor?.turnID)) disagrees"
-            )
+        for error in Self.allErrors {
+            for cursor in cursors {
+                let status = ChatService.settledStatus(for: error, cursor: cursor)
+                let where_ = "\(error), cursor \(cursor == nil ? "absent" : "present")"
+
+                guard error.isRetryable else {
+                    #expect(status == .failed, "\(where_): unretryable must settle failed")
+                    continue
+                }
+
+                let verdict = TurnReconciliation.resolve(state: .streaming, cursor: cursor)
+                #expect(
+                    status.isRetryable == verdict.allowsRetry,
+                    "\(where_): this layer and the store disagree on retry"
+                )
+            }
         }
+    }
+
+    @Test("the error sample covers the whole vocabulary")
+    func everyErrorIsSampled() {
+        // `allErrors` is the filter condition the test above quantifies over,
+        // and a hand-written list is exactly the kind of premise that rots
+        // silently: a seventeenth case would simply never be tested, and every
+        // loop above would still pass.
+        //
+        // `LocalisError` cannot be `CaseIterable`, so the count is pinned
+        // against the one place that must already name every case —
+        // `isRetryable`'s two switch arms, which the compiler checks for
+        // exhaustiveness. Adding a case forces that switch to be updated, and
+        // this count then fails until the sample is updated too.
+        #expect(
+            Self.allErrors.count == 16,
+            "add the new LocalisError case to `allErrors`, then update this count"
+        )
+        // No duplicates hiding a missing case behind the right total.
+        #expect(Set(Self.allErrors).count == Self.allErrors.count)
+        // Both sides of the split are present, or the guard above is untested.
+        #expect(Self.allErrors.contains { $0.isRetryable })
+        #expect(Self.allErrors.contains { !$0.isRetryable })
     }
 
     @Test("a detached turn is not reported as an error")
