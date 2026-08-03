@@ -46,5 +46,7 @@ AppStore_*.mobileprovision
 .env
 .env.*
 
-# Local dev-only scripts (personal device names / UDIDs — not shipped)
-local/
+# Local dev-only scripts and real signing identity (team id, bundle id, personal
+# device names / UDIDs — not shipped). The .example template IS committed.
+local/*
+!local/signing.env.example

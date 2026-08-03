@@ -9,8 +9,9 @@
 # Signing: manual + an App Store distribution profile that fastlane fetches for
 # the paid team. Deliberately NOT automatic — a shared runner keychain holds
 # certificates for several Apple accounts, and automatic signing resolves a
-# Development certificate per target during archive. The paid team 4Z8GG667QD
-# has Distribution but no Development certificate, so automatic falls back to
+# Development certificate per target during archive. The paid team (see
+# LOCALIS_TEAM_ID) has Distribution but no Development certificate, so automatic
+# falls back to
 # some other account's Development cert and archive dies with
 # errSecInternalComponent. Fetching the profile explicitly removes the guess.
 #
@@ -26,7 +27,7 @@ default_platform(:ios)
 APP_IDENTIFIER = "com.leepepe.localis".freeze
 SCHEME = "Localis".freeze
 XCODEPROJ = "Localis.xcodeproj".freeze
-TEAM_ID = "4Z8GG667QD".freeze
+TEAM_ID = ENV.fetch("LOCALIS_TEAM_ID", "XXXXXXXXXX").freeze
 MARKETING_VERSION = "1.0".freeze
 
 platform :ios do

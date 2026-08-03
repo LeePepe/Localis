@@ -1,5 +1,8 @@
-app_identifier("com.leepepe.localis")
-team_id("4Z8GG667QD")
+app_identifier(ENV["LOCALIS_APP_IDENTIFIER"] || "com.example.localis")
+team_id(ENV["LOCALIS_TEAM_ID"] || "XXXXXXXXXX")
 
+# Signing identity is not in the repository. Real values live in `local/signing.env`
+# (gitignored) or in CI secrets — see `local/signing.env.example`.
+#
 # Auth is via App Store Connect API key (see Fastfile / testflight.yml) — no
 # apple_id / password needed, so none is set here.

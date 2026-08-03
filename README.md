@@ -5,7 +5,7 @@ Hermes, Kimi, Codex — on your own Mac, your own LAN, your own server.
 
 There is no Localis backend. Your agents, your machine, in your pocket.
 
-Bundle `com.leepepe.localis` · Team `4Z8GG667QD` · its own TestFlight record.
+Bundle id and Apple team are not committed — see `local/signing.env.example`.
 
 ## Architecture
 
