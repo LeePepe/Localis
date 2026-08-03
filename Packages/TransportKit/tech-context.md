@@ -7,6 +7,7 @@ red_lines:
   - Every wire failure maps to `LocalisError` before it escapes this layer — `URLError`, decoding errors, and socket errors must never reach ChatService or the UI.
   - No UI, no persistence. This layer speaks to the network and returns values; it does not decide what to store or show.
   - User-supplied endpoints are validated here (`EndpointValidator`) before any request. This is a trust boundary — never take a raw string on faith.
+  - HTTPS only. Plaintext HTTP has no fallback path, LAN included (constitution principle V) — self-signed certs are handled by SPKI pinning at pairing time, never by downgrading the scheme.
   - Parsers are pure value types (`SSEParser`), testable with no socket. Do not hide parsing inside a URLSession delegate.
   - Swift 6 strict concurrency; `AgentTransport` conformers must be genuinely `Sendable`.
 roles:

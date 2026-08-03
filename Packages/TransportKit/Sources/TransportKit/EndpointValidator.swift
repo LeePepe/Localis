@@ -7,9 +7,17 @@ import LocalisModels
 /// outbound request, so it is validated here once rather than at each call
 /// site. Failures come back as `LocalisError.invalidInput` with the field name.
 public enum EndpointValidator {
-    /// Schemes Localis will talk to. Local agents are commonly plain HTTP on
-    /// the LAN, so `http` is allowed alongside `https`.
-    public static let allowedSchemes: Set<String> = ["http", "https"]
+    /// Schemes Localis will talk to — **HTTPS only**.
+    ///
+    /// Plaintext HTTP has no fallback path, deliberately, even on the LAN
+    /// (constitution principle V). Conversations carry source code and
+    /// filesystem paths; "it's only my home network" is not a threat model.
+    /// Failing to connect is the correct outcome, not a downgrade.
+    ///
+    /// Self-signed certificates are supported instead, pinned by SPKI SHA-256
+    /// at pairing time — which is what makes HTTPS practical for a LAN agent
+    /// without a public CA.
+    public static let allowedSchemes: Set<String> = ["https"]
 
     /// Parses and normalizes a user-entered endpoint string.
     ///

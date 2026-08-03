@@ -31,6 +31,7 @@ only_rules:
   # ── Project-specific (see custom_rules below) ──
   - empty_catch
   - hardcoded_hex_color_in_ui
+  - no_plaintext_http
 
 custom_rules:
   empty_catch:
@@ -49,5 +50,14 @@ custom_rules:
     severity: warning
     excluded:
       - "Packages/DesignKit/.*"
+      - ".*Tests/.*"
+      - ".*Tests\\.swift"
+
+  no_plaintext_http:
+    name: "Plaintext http:// URL"
+    message: "Constitution principle V: plaintext HTTP has no fallback path, LAN included. Use https:// with SPKI pinning — conversations carry source code and filesystem paths."
+    regex: '"http://'
+    severity: error
+    excluded:
       - ".*Tests/.*"
       - ".*Tests\\.swift"
