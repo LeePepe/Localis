@@ -117,6 +117,22 @@ Note `Space.contentMaxWidth` (1200) is *not* the reading measure. It is a
 dashboard width; a transcript is prose, and prose gets harder to read as the
 measure grows.
 
+## The offline copy carries an assumption it does not own
+
+`ChatService` maps a `detached` turn — link gone, host still generating — onto
+`SessionStatus.disconnected`. The composer's offline copy is therefore read at a
+moment when work may still be running on the user's Mac, and is written for it:
+it offers reading, and says nothing about the reply having ended. "This reply was
+lost" would be a lie in exactly the case background resume exists for.
+
+That mapping is `internal` to another module, so nothing mechanical connects the
+two. `core` has a test that fails if the mapping changes and has undertaken to
+say so first; but rewording the string on this side fails nothing there. So the
+exact copy is pinned by test here, purely to put a reader in the way of the
+assumption before they change it. It is the weakest of the three defences and
+the only one this layer can build alone — if the constraint ever moves into a
+shared type, the pin should go.
+
 ## Empty vs. failed
 
 Two different states, drawn differently on purpose:

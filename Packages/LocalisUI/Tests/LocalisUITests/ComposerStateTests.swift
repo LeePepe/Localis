@@ -102,6 +102,30 @@ struct ComposerStateTests {
         }
     }
 
+    @Test("the offline copy does not claim the turn is over")
+    func disconnectedCopyPreservesItsAssumption() {
+        // This assertion exists to be *in the way*.
+        //
+        // `ChatService` maps a `detached` turn — link gone, host still
+        // generating — onto `.disconnected`. So this copy is read at a moment
+        // when work may well still be running on the user's Mac, and it is
+        // written accordingly: it offers reading, and says nothing about the
+        // reply having ended.
+        //
+        // The mapping lives in another module and is `internal`, so nothing
+        // mechanical ties the two together: `core` has a test that fails if it
+        // changes the mapping, but *rewording this string* fails nothing. A
+        // rewrite to "This reply was lost." would pass every other test here
+        // and tell the user their still-running turn is dead.
+        //
+        // Pinning the exact string is the weakest of the three defences, and it
+        // is what this layer can do alone: change the words and you land here,
+        // and read why they were chosen. If it ever becomes a type, delete this.
+        let reason = ComposerState.make(from: Self.session(.disconnected)).blockedReason
+
+        #expect(reason == "This Mac isn't reachable. You can still read the conversation.")
+    }
+
     @Test("an unpaired host explains that it is unpaired, not merely offline")
     func orphanedIsDistinctFromOffline() {
         // Two different user actions: re-pair vs. wait. Collapsing them into
