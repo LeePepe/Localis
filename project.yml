@@ -1,0 +1,117 @@
+name: Localis
+options:
+  bundleIdPrefix: com.leepepe
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "26.5"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: true
+    DEVELOPMENT_TEAM: 4Z8GG667QD
+    CODE_SIGN_STYLE: Automatic
+    # Single source of truth for the build number. CI overrides it via
+    # `fastlane … xcargs CURRENT_PROJECT_VERSION=N`. Never hardcode this in a
+    # target — divergent values between an app and its extensions are rejected
+    # by App Store processing (CFBundleVersion must match the parent app).
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  LocalisModels:
+    path: Packages/LocalisModels
+  TransportKit:
+    path: Packages/TransportKit
+  ChatService:
+    path: Packages/ChatService
+  SkillsKit:
+    path: Packages/SkillsKit
+  SessionStore:
+    path: Packages/SessionStore
+  LocalisUI:
+    path: Packages/LocalisUI
+  DesignKit:
+    path: Packages/DesignKit
+
+schemes:
+  Localis:
+    build:
+      targets:
+        Localis: all
+        LocalisTests: [test]
+    test:
+      targets:
+        - LocalisTests
+
+targets:
+  Localis:
+    type: application
+    platform: iOS
+    sources:
+      - path: Localis
+        excludes:
+          - "*.entitlements"
+    dependencies:
+      - package: LocalisModels
+      - package: TransportKit
+      - package: ChatService
+      - package: SkillsKit
+      - package: SessionStore
+      - package: LocalisUI
+      - package: DesignKit
+    settings:
+      configs:
+        # Release/CI archive uses manual signing with an explicit App Store
+        # profile (fastlane fetches + installs it in the `beta` lane). The
+        # runner keychain holds certificates for several Apple accounts, and
+        # automatic signing mis-picks among them; pinning the profile removes
+        # the guesswork. Debug inherits the top-level Automatic so local Xcode
+        # builds are unaffected.
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: com.leepepe.localis AppStore
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.leepepe.localis
+        PRODUCT_NAME: Localis
+        INFOPLIST_GENERATION_MODE: GeneratedByBuildSystem
+        MARKETING_VERSION: "1.0"
+        GENERATE_INFOPLIST_FILE: true
+        SWIFT_EMIT_LOC_STRINGS: true
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SUPPORTED_INTERFACE_ORIENTATIONS: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        SUPPORTED_INTERFACE_ORIENTATIONS~ipad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        # Written explicitly into the generated Info.plist — App Store upload
+        # validation requires UISupportedInterfaceOrientations in the main app
+        # bundle, and under GeneratedByBuildSystem the build setting above does
+        # not project into the plist on its own (Invalid bundle otherwise).
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+        # Localis talks to agents on the user's own LAN, which are commonly
+        # plain HTTP. ATS is relaxed for local networking only — public-internet
+        # requests still require HTTPS.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Localis connects to the AI agents running on your own computers over your local network."
+        # TestFlight/App Store: declares the app uses no non-exempt encryption,
+        # so each build skips the manual export-compliance prompt. Localis uses
+        # only HTTPS / standard OS crypto (exempt).
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
+
+  LocalisTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: LocalisTests
+    dependencies:
+      - target: Localis
+      - package: LocalisModels
+      - package: LocalisUI
+      - package: DesignKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.leepepe.localis.tests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Localis.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Localis"
+        BUNDLE_LOADER: "$(TEST_HOST)"
