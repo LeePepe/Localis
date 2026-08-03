@@ -1,27 +1,29 @@
 import Foundation
 import LocalisModels
 
-/// One unit of streamed output from an agent backend.
-public enum TransportEvent: Equatable, Sendable {
-    /// A chunk of assistant text.
-    case chunk(String)
-    /// The backend signalled the turn is finished.
-    case completed
-    /// The backend reported a failure mid-stream.
-    case failed(LocalisError)
-}
+/// A turn in progress: the id needed to resume or cancel it, and its events.
+///
+/// The id is a property rather than the first event because it arrives in the
+/// response header, before any body (contract §3.3). A turn whose id can only be
+/// learned by reading the stream is unresumable in exactly the case that
+/// matters — the connection dying early — and a turn the Mac is still generating
+/// then looks identical to one that never started.
+///
+/// Top-level rather than nested in a client, because the seam is what every
+/// layer above names; a type spelled `SomeClient.TurnStream` would make the
+/// protocol read as if it belonged to one implementation.
+public struct TurnStream: Sendable {
+    /// The bridge's id for this turn, when it sent one.
+    ///
+    /// Optional because a bridge older than the resume contract omits the
+    /// header. Nil means "cannot be resumed", which callers must handle as a
+    /// real case rather than assume away.
+    public let turnID: String?
+    public let events: AsyncThrowingStream<SequencedEvent, Error>
 
-/// A request to send to an agent backend.
-public struct TransportRequest: Equatable, Sendable {
-    public let backend: AgentBackend
-    public let prompt: String
-    /// Prior turns to replay as context, oldest first.
-    public let history: [Message]
-
-    public init(backend: AgentBackend, prompt: String, history: [Message] = []) {
-        self.backend = backend
-        self.prompt = prompt
-        self.history = history
+    public init(turnID: String?, events: AsyncThrowingStream<SequencedEvent, Error>) {
+        self.turnID = turnID
+        self.events = events
     }
 }
 
@@ -31,12 +33,23 @@ public struct TransportRequest: Equatable, Sendable {
 /// on this protocol, never on a concrete transport — which is what lets tests
 /// run without a live agent. Backends are data, so one conformer serves every
 /// backend the bridge advertises — there is no per-backend implementation.
+///
+/// Events are `SequencedEvent`, not a reduced `.chunk`/`.completed`/`.failed`
+/// triple. The narrower shape was here first and is tempting to restore, but it
+/// cannot express two things the contract requires: a failure's progress
+/// (`failed_at_ms`, `tool_calls_completed` — §3.1(d), which forbids a bare
+/// "Error"), and a `seq` to dedupe a replay against (§3.3). Both are parsed off
+/// the wire already; the narrow seam was the only thing discarding them.
 public protocol AgentTransport: Sendable {
-    /// Streams the agent's reply as a sequence of events.
+    /// Streams the agent's reply.
     ///
     /// Implementations must map every wire failure into `LocalisError` before
     /// it escapes — callers never see `URLError` or decoding errors raw.
-    func send(_ request: TransportRequest) async throws -> AsyncThrowingStream<TransportEvent, Error>
+    ///
+    /// - Throws: before the stream begins, for a refused or unreadable
+    ///   response. Failures *during* the stream surface through it instead, so
+    ///   text the user already saw is kept (FR-019).
+    func send(_ request: TurnRequest) async throws -> TurnStream
 
     /// Cheap liveness probe used by the backend-list UI.
     func probe(_ backend: AgentBackend) async -> Bool

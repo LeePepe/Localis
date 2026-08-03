@@ -13,7 +13,7 @@ red_lines:
 roles:
   Types: [AgentTransport, BridgeClient, SSEParser, EndpointValidator, StreamEventMapper, BackendCatalog, SkillCatalog, SPKIPinning, HostCredentialStore, BridgeDiscovery]
 test: swift test --package-path Packages/TransportKit
-owns: [AgentTransport, TransportRequest, TransportEvent, BridgeClient, TurnRequest, SSEParser, EndpointValidator, StreamEventMapper, BackendCatalog, HostCapabilities, SkillCatalog, SPKIPinning, HostCredentialStore, KeychainError, BridgeDiscovery, DiscoveredHost]
+owns: [AgentTransport, TurnStream, BridgeClient, TurnRequest, SSEParser, EndpointValidator, StreamEventMapper, BackendCatalog, HostCapabilities, SkillCatalog, SPKIPinning, HostCredentialStore, KeychainError, BridgeDiscovery, DiscoveredHost]
 ---
 
 # TransportKit Context
@@ -28,16 +28,43 @@ The only layer that touches the network. Everything above it depends on the
 
 ```swift
 protocol AgentTransport: Sendable {
-    func send(_ request: TransportRequest) async throws -> AsyncThrowingStream<TransportEvent, Error>
+    func send(_ request: TurnRequest) async throws -> TurnStream
     func probe(_ backend: AgentBackend) async -> Bool
 }
 ```
 
-`TransportEvent` is `.chunk(String)` / `.completed` / `.failed(LocalisError)`.
+`TurnStream` is `turnID: String?` plus an `AsyncThrowingStream<SequencedEvent, Error>`.
+`BridgeClient` is the conformer.
+
+The seam carries `SequencedEvent`, not a reduced `.chunk`/`.completed`/`.failed`
+triple. The narrow shape was here first and is the tempting simplification, but
+it cannot *express* two things the contract requires, and both were parsed off
+the wire already — the seam was the only thing discarding them:
+
+- **A failure's progress.** Contract §3.1(d) makes `failed_at_ms` and
+  `tool_calls_completed` a MUST, so the user sees "failed after 8 minutes and 3
+  tool calls" instead of a bare "Error". `.failed(LocalisError)` has nowhere to
+  put them, and a caller filling in zeroes would be asserting something false
+  about work the Mac actually did.
+- **The turn id, before the first event.** It arrives in the `x-localis-turn-id`
+  header (§3.3), which is why it is a property of `TurnStream` rather than an
+  event. A turn whose id can only be learned by reading the stream is
+  unresumable in exactly the case resume exists for — the connection dying
+  early — and `.detached` then has no way to be constructed at all.
+
+`AgentTransportTests` pins this shape. A well-meaning narrowing back to three
+cases fails a test rather than quietly deleting two features.
+
 One conformer serves every backend. Backends are **data** (capability
 descriptors from `/v1/models`), never code branches — constitution principle IV
 forbids a `switch` on a backend name anywhere in this layer. Adding a sixth
 agent is a Mac-side adapter, with zero iOS changes and zero releases.
+
+`probe` asks `/v1/models` rather than pinging a backend directly: availability
+is the host's to report (§2), and it is the only party that knows whether a
+backend is signed in. Any failure reads as "not right now" — a probe exists to
+grey a row out, and throwing would turn an unreachable host into an error the
+user must dismiss before seeing the list.
 
 ## SSEParser
 

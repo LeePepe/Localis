@@ -12,7 +12,7 @@ import LocalisModels
 ///
 /// An `actor` because a turn is stateful: the cursor advances as events arrive,
 /// and a stream and a cancel can be in flight at once.
-public actor BridgeClient {
+public actor BridgeClient: AgentTransport {
     /// The protocol version this build speaks (contract §0).
     static let protocolVersion = 1
 
@@ -47,17 +47,6 @@ public actor BridgeClient {
     }
 
     // MARK: - Chat
-
-    /// A turn in progress: the id needed to resume or cancel it, and its events.
-    ///
-    /// The id is a property rather than the first event because it arrives in
-    /// the response header, before any body (contract §3.3). A turn whose id can
-    /// only be learned by reading the stream is unresumable in exactly the case
-    /// that matters — the connection dying early.
-    public struct TurnStream: Sendable {
-        public let turnID: String?
-        public let events: AsyncThrowingStream<SequencedEvent, Error>
-    }
 
     /// Starts a turn (`POST /v1/chat/completions`).
     ///
@@ -131,6 +120,23 @@ public actor BridgeClient {
 
         try await Self.checkStatus(head, body: body)
         return Data(try await Self.collect(body))
+    }
+
+    /// Whether this host can route to `backend` right now.
+    ///
+    /// Asks `/v1/models` rather than pinging the backend directly: availability
+    /// is the host's to report (contract §2), and it is the only party that
+    /// knows whether the backend is signed in. A backend the host no longer
+    /// lists is not available — it was removed, and treating a missing entry as
+    /// reachable would offer the user a backend that cannot answer.
+    ///
+    /// Any failure reads as "not right now". A probe exists to grey a row out,
+    /// and throwing from it would turn an unreachable host into an error the
+    /// user has to dismiss before seeing the list at all.
+    public func probe(_ backend: AgentBackend) async -> Bool {
+        guard let catalog = try? await models() else { return false }
+
+        return catalog.backends.first { $0.id == backend.id }?.isAvailable ?? false
     }
 
     // MARK: - Streaming
