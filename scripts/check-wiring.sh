@@ -252,6 +252,22 @@ if echo "$PROBLEMS" | grep -q '^PARSE-ERROR:'; then
   exit 1
 fi
 
+# ---- --porcelain: the raw verdicts, for callers that decide per problem ------
+#
+# Prints `VERDICT<TAB>PACKAGE` records instead of prose. It exists because the
+# pre-commit hook has to let one known-open gap through while still blocking
+# every other one, and the only alternative — matching the English sentences
+# below — is a filter that silently stops matching when someone rewords a
+# message. A stale allowlist pattern and a genuinely clean run produce the same
+# thing here: no output. The verdict vocabulary is fixed; the prose is not.
+#
+# Still exits non-zero: this is a different rendering of a failure, not a
+# softer one. A caller that wants to forgive something has to say so itself.
+if [ "${1:-}" = "--porcelain" ]; then
+  echo "$PROBLEMS"
+  exit 1
+fi
+
 echo "❌ wiring: $PROJECT_YML declares packages the app does not really use:"
 echo "$PROBLEMS" | while IFS=$'\t' read -r verdict package; do
   case "$verdict" in

@@ -94,17 +94,44 @@ if echo "$STAGED" | grep -qE '^(Localis/|project\.yml$|scripts/check-wiring\.sh$
     #   light green while hiding the gap.
     # Whoever wires US4: delete this waiver, do not extend it. Any package NOT
     # named here fails the commit.
-    WIRING_WAIVER="SkillsKit"
-    if ! WIRING_OUT="$(bash scripts/check-wiring.sh 2>&1)"; then
-      UNWAIVED="$(echo "$WIRING_OUT" | grep -E '^\s+-\s' | grep -vE "^\s+-\s+${WIRING_WAIVER}\b" || true)"
+    #
+    # Matched against `--porcelain` (`VERDICT<TAB>PACKAGE`), not against the
+    # prose. The prose form worked, but only for as long as nobody reworded it:
+    # its filter keys on a literal `     - ` prefix and an em dash, so changing
+    # `- X — declared…` to `* X: declared…` makes the filter match nothing —
+    # and "matched nothing" is spelled the same way here as "no problems",
+    # i.e. the commit is allowed through. Verified: with the prose reworded, a
+    # brand-new unwired package sails past; with --porcelain it is still caught.
+    # The verdict vocabulary is fixed, so it has no such failure mode.
+    #
+    # The waiver is keyed on verdict+package, not package alone: declared-but-
+    # never-imported and imported-but-unused are different bugs, and a waiver
+    # for one must not silently cover the other.
+    WIRING_WAIVER="$(printf 'NOT-IMPORTED\tSkillsKit')"
+    WIRING_PROBLEMS="$(bash scripts/check-wiring.sh --porcelain 2>/dev/null || true)"
+    if [ -n "$WIRING_PROBLEMS" ]; then
+      UNWAIVED="$(comm -23 \
+        <(printf '%s\n' "$WIRING_PROBLEMS" | grep -v '^$' | sort) \
+        <(printf '%s\n' "$WIRING_WAIVER" | grep -v '^$' | sort))"
       if [ -n "$UNWAIVED" ]; then
-        echo "$WIRING_OUT"
+        bash scripts/check-wiring.sh || true   # the readable version, for the human
         echo "[pre-commit] ❌ wiring check failed for packages outside the waiver:"
-        echo "$UNWAIVED"
+        printf '%s\n' "$UNWAIVED" | sed 's/^/     /'
         exit 1
       fi
-      echo "[pre-commit] ⚠️  wiring: only the documented waiver ($WIRING_WAIVER) is unwired — allowed for now"
+      echo "[pre-commit] ⚠️  wiring: only the documented waiver is unwired — allowed for now"
     fi
+
+    # A waiver that no longer matches anything is its own defect: the gap it
+    # excused is fixed, and it now sits here ready to forgive the next problem
+    # that happens to have the same shape.
+    while IFS= read -r waived; do
+      [ -z "$waived" ] && continue
+      printf '%s\n' "$WIRING_PROBLEMS" | grep -qF -- "$waived" || {
+        echo "[pre-commit] ⚠️  waiver no longer applies: $waived"
+        echo "[pre-commit]    that gap is fixed — delete the waiver, don't leave it armed"
+      }
+    done <<< "$WIRING_WAIVER"
   fi
 fi
 
