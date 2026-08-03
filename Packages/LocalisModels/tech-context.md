@@ -100,6 +100,28 @@ append — a stale message id must not corrupt a transcript.
 enforced structurally: no initialiser overload or copy-with helper accepts a new
 host, so there is no code path that moves a session between machines.
 
+## Derived state vs historical fact
+
+The test for whether something must be persisted:
+
+> **Can it be recomputed after a relaunch? Then it is derived state. If it
+> cannot, it is a historical fact and must be stored.**
+
+`HostRuntimeState` is derived — reachability and latency are a fresh probe away,
+so persisting them would only mean showing a stale answer until the real one
+arrives. That is why the type is deliberately not `Codable`: the type system
+refuses the mistake rather than a reviewer having to catch it.
+
+`SessionStatus.error` and `TurnFailure` are historical facts. That the turn
+failed, eight minutes in, after three tool calls, is not observable from
+anywhere once the process dies. Dropping it means the user comes back to a
+conversation that reads as idle — or to a bare "Error" — and cannot tell whether
+anything happened at all, let alone whether to retry.
+
+Note the two are not distinguished by how *transient* they feel. A live stream
+and a failed turn are equally momentary; the difference is only that one can be
+asked again and the other cannot. Apply the question, not the intuition.
+
 ## Error mapping
 
 Each layer maps its own failures into `LocalisError` **at its boundary**, so the
