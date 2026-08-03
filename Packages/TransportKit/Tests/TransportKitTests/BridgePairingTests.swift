@@ -170,7 +170,7 @@ struct BridgePairingTests {
         let pairing = BridgePairing(http: http, credentials: store)
         let host = HostID()
 
-        await #expect(throws: LocalisError.unauthorized) {
+        await #expect(throws: LocalisError.pairingCodeRejected) {
             try await pairing.pair(
                 host: host,
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
@@ -195,11 +195,16 @@ struct BridgePairingTests {
         // and the user must start a new one on the Mac. Reporting it as a
         // generic failure would leave them retyping into a session that can
         // never succeed.
+        //
+        // This test asserted `.unauthorized` until the two cases were split —
+        // the same value the 401 test above asserts. Its name said "reported
+        // distinctly" while its assertion accepted the two being identical, so
+        // it stayed green through exactly the defect it was written to catch.
         let http = StubHTTP(responses: [.success(status: 429, body: #"{"error":{"code":"too_many_attempts"}}"#)])
         let store = HostCredentialStore(service: Self.testService())
         let pairing = BridgePairing(http: http, credentials: store)
 
-        await #expect(throws: LocalisError.unauthorized) {
+        await #expect(throws: LocalisError.pairingSessionExpired) {
             try await pairing.pair(
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
@@ -224,7 +229,7 @@ struct BridgePairingTests {
         let pairing = BridgePairing(http: http, credentials: store)
 
         for _ in 0..<5 {
-            await #expect(throws: LocalisError.unauthorized) {
+            await #expect(throws: LocalisError.pairingCodeRejected) {
                 try await pairing.pair(
                     host: HostID(),
                     endpoint: HostEndpoint(host: "mac.local", port: 8443),
@@ -236,7 +241,11 @@ struct BridgePairingTests {
             }
         }
 
-        await #expect(throws: LocalisError.unauthorized) {
+        // The transition this test is named for. Before the cases were split,
+        // both assertions here were `.unauthorized` — the same value on both
+        // sides of "then", so the one thing the name promises to check was the
+        // one thing it could not have caught.
+        await #expect(throws: LocalisError.pairingSessionExpired) {
             try await pairing.pair(
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
@@ -392,12 +401,18 @@ private actor StubHTTP: HTTPPerforming {
         }
         switch queue.removeFirst() {
         case .success(let status, let body):
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: status,
-                httpVersion: nil,
-                headerFields: nil
-            )!
+            // Not `!`, and deliberately not a thrown `URLError` either: several
+            // tests here script a transport failure and assert on it, so a stub
+            // that reported its own breakage that way would be indistinguishable
+            // from the case under test. `Issue.record` fails the test as itself.
+            guard let url = request.url,
+                  let response = HTTPURLResponse(
+                      url: url, statusCode: status, httpVersion: nil, headerFields: nil
+                  )
+            else {
+                Issue.record("StubHTTP could not build a response — the stub is broken, not the code under test")
+                throw Fixture.FixtureError.missing("unbuildable stub response")
+            }
             return (Data(body.utf8), response)
         case .failure(let error):
             throw error

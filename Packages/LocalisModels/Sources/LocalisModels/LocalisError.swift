@@ -68,6 +68,27 @@ public enum LocalisError: Error, Codable, Hashable, Sendable {
     /// say content was lost than to present a partial answer as whole.
     case truncated
 
+    // MARK: - Pairing
+
+    /// 401 during pairing — the six digits were wrong, or the code expired
+    /// (FR-002: single-use, 120 seconds).
+    ///
+    /// Distinct from `unauthorized`, which is a *stored bearer token* being
+    /// refused on an already-paired host. Nothing is stored yet when this
+    /// happens, so the two need different wording and different recovery: one
+    /// sends the user back to the Mac's screen, the other to re-pairing.
+    case pairingCodeRejected
+    /// 429 during pairing — five failed attempts invalidated the request
+    /// (spec.md:62), so the code on the Mac's screen is now dead.
+    ///
+    /// The sentence spec §US1 scenario 3 writes as one — "显示「配对码不对」…
+    /// 连续失败 5 次后该配对请求作废需重新发起" — is two outcomes with two
+    /// different next actions, and only this case can express the second. While
+    /// they shared `unauthorized`, the fifth wrong attempt still read "wrong
+    /// code, try again", which is advice that cannot succeed: the user retypes
+    /// correct digits against a session the Mac has already discarded.
+    case pairingSessionExpired
+
     /// Which end of the connection needs updating.
     ///
     /// A conclusion, not two version numbers to re-compare at each call site —
@@ -88,11 +109,19 @@ public enum LocalisError: Error, Codable, Hashable, Sendable {
         switch self {
         case .unreachable, .connectionLost, .malformedResponse,
              .sessionBusy, .backendUnavailable,
-             .turnExpired, .unknownTurn, .truncated:
+             .turnExpired, .unknownTurn, .truncated,
+             // A misread digit is the one pairing failure where trying again is
+             // exactly right — the code on the Mac is still live.
+             .pairingCodeRejected:
             return true
         case .unauthorized, .invalidInput, .cancelled, .tokenRevoked,
              .unknownBackend, .protocolUpgradeRequired,
-             .turnNotYours, .certificatePinMismatch:
+             .turnNotYours, .certificatePinMismatch,
+             // Not retryable in the strict sense that matters here: no code the
+             // user can type will work until pairing is restarted on the Mac.
+             // Offering retry would loop them through attempts that are all
+             // guaranteed to fail identically.
+             .pairingSessionExpired:
             return false
         }
     }
@@ -135,6 +164,15 @@ public enum LocalisError: Error, Codable, Hashable, Sendable {
             return "That reply belongs to a different device."
         case .certificatePinMismatch:
             return "This Mac's identity has changed. Pair again to confirm it's the same machine."
+        case .pairingCodeRejected:
+            // Names the code, and only the code: the digits may simply have been
+            // misread, and the pairing session is still live.
+            return "That pairing code isn't right. Check the code on the Mac and try again."
+        case .pairingSessionExpired:
+            // Deliberately does not say "try again" — the point of this case is
+            // that trying again is what stops working here. It names the one
+            // action that can succeed, which is on the Mac, not on this screen.
+            return "Too many attempts. Start pairing again on the Mac to get a new code."
         case .truncated:
             return "The reply was too long to keep in full, so part of it was lost."
         }
