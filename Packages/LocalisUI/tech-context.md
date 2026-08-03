@@ -10,11 +10,12 @@ red_lines:
   - Views never mutate a model in place. They render snapshots and send intent up; state changes come back as new values.
   - Errors are shown, never swallowed. A failed load renders a real message, not an empty list that looks like "no sessions".
   - UI strings go through `String(localized:)`. No hardcoded user-facing text.
+  - A `detached` turn renders no retry control — not disabled, not behind a confirmation. Absent. See "The third detached layer".
 roles:
-  Types: [SessionRowState]
+  Types: [SessionRowState, MessageState]
   UI: [SessionListView]
 test: swift test --package-path Packages/LocalisUI
-owns: [SessionRowState, SessionRow, SessionListView]
+owns: [SessionRowState, SessionRow, SessionListView, MessageState, MessageAction, FailureDetail]
 ---
 
 # LocalisUI Context
@@ -38,6 +39,40 @@ pattern:
 
 The view then does nothing but lay these fields out — which is why this package
 has real unit tests despite being all UI.
+
+## The third detached layer
+
+`MessageState.actions` is a `Set<MessageAction>`, not a pair of
+`isRetryEnabled` booleans, and the type choice is the point.
+
+Amendment C §1.5 and design contract rule 8 both say a `detached` turn — one the
+connection dropped on while the host kept generating — must not render a retry
+control *at all*. Greying it out is not enough: a mis-tap on a control that still
+fires starts a second generation on the user's Mac while the first is running. A
+boolean hands the view a button and asks it to be careful; a set that simply does
+not contain `.retry` gives it nothing to draw.
+
+This is the third of three layers enforcing the same rule, and none of them
+re-decides it:
+
+| layer | mechanism |
+|---|---|
+| LocalisModels | `MessageStatus.isRetryable` is false for `.detached` |
+| SessionStore | `TurnReconciliation.allowsRetry` is true only for `.lost` / `.failed` |
+| LocalisUI | `MessageState.actions` omits `.retry`, by asking `isRetryable` |
+
+Three layers only help if they agree by deriving from one rule rather than by
+coincidence — so `actions(for:)` delegates rather than pattern-matching the enum
+a fourth time.
+
+## Failure detail is never fabricated
+
+`FailureDetail` exists only when the host reported both `failed_at_ms` and
+`tool_calls_completed`. There is no "unknown" case and no zero default: rule 7 of
+the design contract says a value the backend never sent makes its row disappear,
+and a zeroed detail would render "failed instantly, after 0 tool calls" — a
+number nobody reported. Zero *is* meaningful when it arrives from the host; it is
+never manufactured locally.
 
 ## Empty vs. failed
 
