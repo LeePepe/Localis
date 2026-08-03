@@ -1,0 +1,94 @@
+name: CI
+
+# Two triggers:
+#   - pull_request → main: gate PRs BEFORE merge. Set `spm` and `policy` as
+#     required status checks in branch protection so a red run blocks the merge.
+#   - push → main: post-merge safety net.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---- Job A: the SPM packages — swift build + test, seconds, no simulator ----
+  # This is the primary gate. Layer logic lives in the packages, so this job
+  # covers most of the codebase and runs in seconds.
+  spm:
+    name: SPM ${{ matrix.package }}
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - LocalisModels
+          - TransportKit
+          - ChatService
+          - SkillsKit
+          - SessionStore
+          - LocalisUI
+          - DesignKit
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.5.app
+      - name: swift build
+        working-directory: Packages/${{ matrix.package }}
+        run: swift build
+      - name: swift test
+        working-directory: Packages/${{ matrix.package }}
+        run: swift test
+
+  # ---- Job B: the app target — xcodegen + xcodebuild test on a simulator ----
+  app:
+    name: App target
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.5.app
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      # The .xcodeproj is generated, never committed — CI regenerates it from
+      # project.yml, so a stale checked-in pbxproj can never drift into a build.
+      - name: Generate project
+        run: xcodegen generate
+      - name: xcodebuild test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Localis.xcodeproj \
+            -scheme Localis \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -skipPackagePluginValidation \
+            2>&1 | tee /tmp/xcb.log | tail -60
+      - name: Surface compile/test errors
+        if: failure()
+        run: grep -E "error:|Testing failed|BUILD FAILED|Unable to find" /tmp/xcb.log | sort -u | head -60 || true
+
+  # ---- Job C: lint + policy gates (mirrors the local hooks, server-side) ----
+  policy:
+    name: Lint & policy
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      # Secret scan: Localis stores user-supplied agent endpoints and tokens,
+      # so a hardcoded credential is a real risk surface, not a hypothetical.
+      - name: Install gitleaks
+        run: brew install gitleaks
+      - name: gitleaks detect (full history)
+        run: gitleaks detect --no-banner --redact
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      - name: SwiftLint --strict
+        run: swiftlint lint --strict
+      # Layer frontmatter must stay consistent with the packages on disk.
+      - name: Layer frontmatter anti-rot check
+        run: bash scripts/check-frontmatter.sh

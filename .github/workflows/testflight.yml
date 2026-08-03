@@ -1,0 +1,152 @@
+name: testflight
+
+# Periodically package main and upload it to TestFlight (internal testing).
+#   - schedule: checks once a day at 03:00 CST; builds only when main has new
+#     commits since the last successful release. That point is recorded in the
+#     moving tag `testflight/last-released`, which makes the gate cumulative —
+#     commits are never dropped because a build failed or the machine was off;
+#     the next run picks up everything that accumulated.
+#   - workflow_dispatch: manual fallback; force=true ignores the gate.
+#
+# ⚠️ RUNNER SETUP REQUIRED — this job targets a self-hosted runner labelled
+# `localis-mac`, which does not exist yet. Two options, and this is the user's
+# call:
+#   (a) Reuse the existing VitalStride mac. Add `localis-mac` as a second label
+#       to that runner (Settings → Actions → Runners → the runner → Labels), or
+#       register a second runner on the same machine for this repo. Either way
+#       the Apple Distribution certificate is already in its login keychain.
+#   (b) Register a fresh runner on another mac. The paid team's Apple
+#       Distribution certificate must be installed in its login keychain —
+#       fastlane fetches the provisioning profile, but not the certificate.
+# Until a runner carries this label, the job stays queued and never starts.
+#
+# Required secrets: ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8_BASE64 and
+# KEYCHAIN_PASSWORD (see AGENTS.md → TestFlight).
+#
+# Pushing the tag does not re-trigger ci.yml (its push filter is branches:[main]).
+
+on:
+  schedule:
+    - cron: "0 19 * * *" # 19:00 UTC = 03:00 CST
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Ignore the no-new-commits gate and release anyway"
+        type: boolean
+        default: false
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false # never interrupt an upload in flight
+
+permissions:
+  contents: write # to move the testflight/last-released tag
+
+jobs:
+  release:
+    name: Build & upload to TestFlight
+    runs-on: [self-hosted, localis-mac]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Decide whether to release
+        id: gate
+        run: |
+          set -euo pipefail
+          LATEST="$(git rev-parse HEAD)"
+          RELEASED="$(git rev-parse -q --verify refs/tags/testflight/last-released || echo none)"
+          FORCE="${{ github.event.inputs.force }}"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "HEAD=$LATEST  last-released=$RELEASED  force=$FORCE"
+          if [ "$FORCE" = "true" ] || [ "$LATEST" != "$RELEASED" ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "→ new commits (or force): building + uploading"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "→ skipped: no new commits since the last TestFlight release"
+          fi
+
+      - name: Verify Xcode
+        if: steps.gate.outputs.release == 'true'
+        # Xcode is selected by the user on a self-hosted runner (no passwordless
+        # sudo, so we can't `sudo xcode-select` the way a hosted runner would).
+        # Report the version rather than change it.
+        run: |
+          echo "Using: $(xcode-select -p)"
+          xcodebuild -version
+
+      - name: Ensure tooling
+        if: steps.gate.outputs.release == 'true'
+        run: |
+          brew list fastlane >/dev/null 2>&1 || brew install fastlane
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Verify API key secret
+        if: steps.gate.outputs.release == 'true'
+        env:
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          # fastlane consumes the base64 key directly (is_key_content_base64),
+          # so the plaintext .p8 is never written to disk. Only presence is
+          # checked here.
+          if [ -z "${ASC_KEY_P8_BASE64:-}" ]; then
+            echo "::error::ASC_KEY_P8_BASE64 secret is not set" ; exit 1
+          fi
+
+      - name: Unlock login keychain for codesign
+        if: steps.gate.outputs.release == 'true'
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # The runner runs in its own launchd session (PPID=1), where the login
+          # keychain is locked by default — codesign then can't reach the Apple
+          # Distribution private key and fails with errSecInternalComponent.
+          # Unlock it and allow codesign non-interactive access before each build.
+          if [ -z "${KEYCHAIN_PASSWORD:-}" ]; then
+            echo "::error::KEYCHAIN_PASSWORD secret is not set (gh secret set KEYCHAIN_PASSWORD)"; exit 1
+          fi
+          KC="$HOME/Library/Keychains/login.keychain-db"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          # Disable auto-relock so a long archive isn't locked out mid-run.
+          security set-keychain-settings "$KC"
+          # Ensure the login keychain is in the search list. `-s` replaces the
+          # whole list, so read the current one back and merge, de-duplicated.
+          EXISTING=$(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//')
+          security list-keychains -d user -s $(printf '%s\n' "$KC" $EXISTING | awk '!seen[$0]++')
+          # Allow apple/codesign tools to use the private key without prompting
+          # (idempotent — safe to re-run).
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KC" >/dev/null 2>&1 || true
+
+      - name: fastlane beta
+        if: steps.gate.outputs.release == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+          # A cold SPM resolve + showBuildSettings on a self-hosted runner can
+          # exceed fastlane's 3s default (even after retries), which makes
+          # build_app give up before it starts. Widen the timeout and retries.
+          FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: "120"
+          FASTLANE_XCODEBUILD_SETTINGS_RETRIES: "6"
+        run: fastlane ios beta
+
+      - name: Move last-released tag
+        if: steps.gate.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHA="${{ steps.gate.outputs.latest }}"
+          git tag -f testflight/last-released "$SHA"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/tags/testflight/last-released"
+          echo "✅ testflight/last-released → $SHA"
