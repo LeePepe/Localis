@@ -96,11 +96,23 @@ struct HostRecoveryTests {
         #expect(row.status == "Not paired")
     }
 
-    @Test("a paired machine comes back connectable")
-    func pairedHostSurvivesAsConnectable() async throws {
-        // The other direction, and it needs its own test: a bug that dropped
-        // the pin on the way to disk would leave every host unpaired forever,
-        // and the test above would still pass.
+    @Test("a paired machine comes back paired, and still not connectable on the store alone")
+    func pairedHostSurvivesAsPairedButNotConnectable() async throws {
+        // **This test used to assert the opposite**, and the store changing
+        // under it is the point rather than an accident. `SessionStore` no
+        // longer has a pin column at all: the Keychain is the only owner of a
+        // trust anchor, so every host read back from disk has `pinnedSPKI ==
+        // nil` and `canConnect == false` by construction.
+        //
+        // So the pair of facts worth pinning down is this one — the *state*
+        // survives the trip to disk, and connectability does **not** come with
+        // it. The old assertion (`isConnectable == true`) can no longer be true
+        // for any stored host, and a test that demands it would be demanding
+        // the second trust anchor back.
+        //
+        // What still needs saying: dropping `pairingState` on the way to disk
+        // would leave a machine the user paired looking unpaired forever, and
+        // no other test in this suite would notice.
         let paired = Self.mac().beginningPairing().paired(pinning: SPKIHash(base64: "AAA="))
         let repository = try await Self.relaunching { try await $0.save(paired) }
 
@@ -108,19 +120,31 @@ struct HostRecoveryTests {
         await model.load()
 
         let row = try #require(await model.rows.first)
-        #expect(row.isConnectable)
         #expect(row.status == "Paired")
+        // Not an oversight and not a TODO: until the composition point joins
+        // this record to the Keychain pin, nothing read from the store may
+        // offer to connect. A green here on `true` would mean the pin came
+        // back from somewhere it must not live.
+        #expect(row.isConnectable == false)
     }
 
     @Test("a paired machine that came back without its pin is not offered as connectable")
     func pairedWithoutPinIsNotConnectable() async throws {
-        // **This test exists because a mutation survived.** Replacing
+        // **This test exists because a mutation survived**, and it has since
+        // been overtaken by events in a way worth recording. Replacing
         // `host.canConnect` with `host.pairingState == .paired` changed no test
         // — every fixture was either paired *and* pinned or neither, so the two
-        // expressions agreed everywhere they were exercised. The one state that
-        // tells them apart had no test, and it is not hypothetical: it is
-        // exactly what a store that persists `pairingState` but not the pin
-        // hands back on every cold start.
+        // expressions agreed everywhere they were exercised.
+        //
+        // When it was written, the paired-but-unpinned state was a prediction:
+        // "exactly what a store that persists `pairingState` but not the pin
+        // hands back on every cold start". `SessionStore` has since dropped its
+        // pin column, so this is no longer the edge case — it is the **only**
+        // case. Every host the app reads from disk arrives in this shape.
+        //
+        // The fixture is built by hand rather than through `paired(pinning:)`
+        // on purpose: it must keep describing a host with no pin even if the
+        // store's behaviour changes again.
         //
         // A row that offered to connect here would be offering an unpinned
         // connection to a machine we cannot authenticate — pinning switched off

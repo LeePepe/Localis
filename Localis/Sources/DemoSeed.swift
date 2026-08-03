@@ -73,10 +73,17 @@ enum DemoSeed {
     /// `hosts()`. Handing `RootView` a hardcoded array would photograph the
     /// strip rather than the persistence, and persistence is the whole of B-1.
     ///
-    /// The two states are chosen to make a wrong projection visible: one paired
-    /// and pinned, one merely discovered. A single paired fixture would look
-    /// identical whether or not `canConnect` was consulted — which is exactly
-    /// the mutation that survived the first run of the harness.
+    /// **The pin passed here does not survive, and that is the store's
+    /// contract, not a bug.** `SessionStore` has no pin column — the Keychain
+    /// is the only owner of a trust anchor — so both machines come back with
+    /// `canConnect == false` and both pills render in the neutral tone. Until
+    /// the composition point joins these records to their Keychain pins, no
+    /// host in the app can be connectable, and a seed that appeared to produce
+    /// one would be showing something the real app cannot do.
+    ///
+    /// The two states still earn their place: they differ in `pairingState`,
+    /// so a projection that lost the state on the way to disk shows two
+    /// identical rows instead of "Paired" and "Not paired".
     private static func hostFixtures() -> [LocalisHost] {
         [
             LocalisHost(
