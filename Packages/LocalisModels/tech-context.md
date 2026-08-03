@@ -12,9 +12,9 @@ red_lines:
   - `HostRuntimeState` is deliberately not `Codable` — reachability and latency are derived, never persisted.
   - The bridge's own `error.message` is never carried into `LocalisError` — it may contain absolute paths. UI text is derived locally from the code.
 roles:
-  Types: [LocalisHost, HostRuntimeState, HostRecognition, AgentBackend, BackendRef, Message, Session, TurnCursor, SkillDescriptor, LocalisError]
+  Types: [LocalisHost, HostRuntimeState, HostRecognition, AgentBackend, BackendRef, Message, Session, TurnCursor, TurnFailure, SkillDescriptor, LocalisError]
 test: swift test --package-path Packages/LocalisModels
-owns: [LocalisHost, HostID, HostEndpoint, SPKIHash, HostPairingState, HostKind, HostRuntimeState, HostReachability, HostUnreachableReason, HostRecognition, AgentBackend, BackendAvailability, BackendRef, Message, MessageRole, MessageStatus, Session, SessionStatus, TurnCursor, SkillDescriptor, LocalisError]
+owns: [LocalisHost, HostID, HostEndpoint, SPKIHash, HostPairingState, HostKind, HostRuntimeState, HostReachability, HostUnreachableReason, HostRecognition, AgentBackend, BackendAvailability, BackendRef, Message, MessageRole, MessageStatus, Session, SessionStatus, TurnCursor, TurnFailure, SkillDescriptor, LocalisError]
 ---
 
 # LocalisModels Context
@@ -36,6 +36,7 @@ asymmetry is deliberate — it is what keeps the dependency graph acyclic.
 | `Message` | One turn: role, text, timestamp, delivery status |
 | `Session` | A conversation bound to one host; holds the transcript |
 | `TurnCursor` | Resume cursor `(turnID, lastSeq)` for an in-flight turn (Amendment C) |
+| `TurnFailure` | How far a turn got before it died — `failedAtMs`, `toolCallsCompleted` |
 | `SkillDescriptor` | A prompt template the input bar can insert (Amendment B) |
 | `LocalisError` | The single error vocabulary all layers map into |
 
@@ -126,4 +127,23 @@ event 0 and the second would be a sentinel pretending to be a sequence number.
 replays from `seq + 1`, so the other choice would skip exactly one frame.
 `advanced(to:)` never moves backwards, because after a resume the old connection
 can still deliver a late frame.
+
+A *gap* in `seq` is accepted rather than rejected: the bridge decides what to
+replay, and a client demanding consecutive numbers would strand a turn forever
+the moment one was skipped. Prefer `accepts(turnID:seq:)` over `shouldAccept` —
+`seq` counts per turn, so another turn's frame carries numbers in the same range
+and would otherwise mark this cursor's progress.
+
+## Failure detail lives on the message
+
+Contract §3.1(d) makes `failed_at_ms` and `tool_calls_completed` **required** on
+a failed turn, so the user gets "failed 8 minutes in, after 3 tool calls" rather
+than a bare "Error". `TurnFailure` is stored on `Message`, not just on a stream
+event, because the message is what survives a relaunch — and force-quitting
+before seeing the failure is the exact case background resume exists for.
+
+`Message.failed(_:)` sets status and detail together. Separate setters would
+permit a `.failed` message with nothing to show, which is the outcome the
+contract forbids. Moving off `.failed` drops the detail, so a successful retry
+cannot carry stale "failed 8 minutes in" wording on a finished answer.
 

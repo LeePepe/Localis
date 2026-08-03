@@ -79,19 +79,50 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public let text: String
     public let createdAt: Date
     public let status: MessageStatus
+    /// How far the turn got before it died — present only when `status` is
+    /// `.failed` (contract §3.1(d)).
+    ///
+    /// Stored on the message rather than held in a stream event because the
+    /// message is what survives a relaunch, and force-quitting before seeing the
+    /// failure is precisely the case background resume exists for.
+    ///
+    /// The tie to `.failed` is maintained by the initialiser, not by convention:
+    /// there is no code path that produces a `.complete` message still carrying
+    /// "failed 8 minutes in".
+    public let failure: TurnFailure?
 
     public init(
         id: UUID,
         role: MessageRole,
         text: String,
         createdAt: Date,
-        status: MessageStatus = .complete
+        status: MessageStatus = .complete,
+        failure: TurnFailure? = nil
     ) {
         self.id = id
         self.role = role
         self.text = text
         self.createdAt = createdAt
         self.status = status
+        // Detail without a failure is a contradiction the rest of the app would
+        // have to keep re-checking. Drop it once, here.
+        self.failure = status == .failed ? failure : nil
+    }
+
+    /// Decodes messages stored before `failure` existed.
+    ///
+    /// SessionStore holds rows written by earlier builds; failing on them would
+    /// lose the user's transcript on upgrade.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            role: try container.decode(MessageRole.self, forKey: .role),
+            text: try container.decode(String.self, forKey: .text),
+            createdAt: try container.decode(Date.self, forKey: .createdAt),
+            status: try container.decode(MessageStatus.self, forKey: .status),
+            failure: try container.decodeIfPresent(TurnFailure.self, forKey: .failure)
+        )
     }
 
     /// Returns a copy with `chunk` appended — the streaming path.
@@ -113,8 +144,28 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     }
 
     /// Returns a copy marked with a different status.
+    ///
+    /// Moving off `.failed` drops the failure detail: a retry that succeeds must
+    /// not keep "failed 8 minutes in" attached, where it would read as a fresh
+    /// failure on a finished answer.
     public func withStatus(_ newStatus: MessageStatus) -> Message {
-        Message(id: id, role: role, text: text, createdAt: createdAt, status: newStatus)
+        Message(
+            id: id, role: role, text: text, createdAt: createdAt,
+            status: newStatus, failure: failure
+        )
+    }
+
+    /// Marks the turn failed **with** the progress the host reported.
+    ///
+    /// One call, not a status setter plus a detail setter, because the contract
+    /// states it as one rule: mark it failed *and* carry the progress. Separate
+    /// setters would permit a `.failed` message with nothing to show — the bare
+    /// "Error" that §3.1(d) exists to forbid.
+    public func failed(_ failure: TurnFailure) -> Message {
+        Message(
+            id: id, role: role, text: text, createdAt: createdAt,
+            status: .failed, failure: failure
+        )
     }
 
     /// See `MessageStatus.isTerminal`.
