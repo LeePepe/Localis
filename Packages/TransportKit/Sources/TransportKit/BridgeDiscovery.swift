@@ -44,14 +44,12 @@ public struct DiscoveredHost: Hashable, Sendable {
         let host = service.host.trimmed
         guard !host.isEmpty, (1...65_535).contains(service.port) else { return nil }
 
-        let advertisedName = service.txt[TXTKey.name]?.trimmed
-        displayName = (advertisedName?.isEmpty == false ? advertisedName! : service.name)
+        displayName = service.txt[TXTKey.name]?.trimmed.nonEmpty ?? service.name
         endpoint = HostEndpoint(host: host, port: service.port)
 
         // Blank is absent. An empty `hid` would compare equal to another empty
         // `hid` and merge two unrelated machines during recognition.
-        let advertisedID = service.txt[TXTKey.bridgeID]?.trimmed
-        bridgeID = advertisedID?.isEmpty == false ? advertisedID : nil
+        bridgeID = service.txt[TXTKey.bridgeID]?.trimmed.nonEmpty
 
         advertisedProtocol = service.txt[TXTKey.version].flatMap { Int($0.trimmed) }
         source = .bonjour

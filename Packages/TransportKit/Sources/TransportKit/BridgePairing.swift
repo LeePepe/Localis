@@ -166,9 +166,9 @@ public struct BridgePairing: Sendable {
         return Decoded(
             token: token,
             // A nameless bridge is usable; the caller shows the address instead.
-            bridgeName: name?.isEmpty == false ? name! : "",
+            bridgeName: name?.nonEmpty ?? "",
             protocolVersion: json["protocol"]?.intValue ?? protocolVersion,
-            bridgeID: bridgeID?.isEmpty == false ? bridgeID : nil
+            bridgeID: bridgeID?.nonEmpty
         )
     }
 }

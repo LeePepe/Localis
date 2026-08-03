@@ -117,4 +117,15 @@ extension String {
     var trimmed: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// `nil` when empty, so "absent" and "blank" collapse into one case.
+    ///
+    /// Every wire field here already treats a blank string as absent, but
+    /// writing that inline produced `x?.isEmpty == false ? x! : fallback` — a
+    /// force unwrap whose safety came from a condition three tokens away, and
+    /// which SwiftLint rejects under `--strict`. `?? fallback` says the same
+    /// thing and cannot trap.
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
 }
