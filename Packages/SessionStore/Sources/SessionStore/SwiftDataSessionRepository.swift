@@ -237,15 +237,39 @@ public actor SwiftDataSessionRepository {
     /// Persisted rather than held in memory because "backgrounded" and "killed"
     /// are the same case on the wire (Amendment C §1.2) — a cursor that only
     /// lived in a running process would cover just one of them.
+    ///
+    /// `failure` carries the `x-localis-turn-end` detail so the app can say
+    /// "failed 8 minutes in, after 3 tool calls" even if the user force-quit
+    /// before the message was ever shown.
     public func recordTurn(
         messageID: UUID,
         state: StoredDeliveryState,
-        cursor: ResumeCursor?
+        cursor: TurnCursor?,
+        failure: TurnFailure? = nil
     ) throws {
         guard let row = try storedMessage(id: messageID) else { return }
         row.deliveryStateRaw = state.rawValue
         row.turnID = cursor?.turnID
         row.lastSeq = cursor?.lastSeq
+        row.failedAtMs = failure?.failedAtMs
+        row.toolCallsCompleted = failure?.toolCallsCompleted
+        try modelContext.save()
+    }
+
+    /// Marks a turn's output as cut off — recorded as `interrupted`, never
+    /// `complete` (contract §3.3).
+    ///
+    /// Truncation is the one case where the honest answer is worse-looking than
+    /// the dishonest one. Storing a cut-off answer as `complete` presents a
+    /// partial reply as the whole thing, and the user has no way to know the
+    /// rest existed. `interrupted` says we lost it, and is retryable — there is
+    /// nothing left on the host to resume, so the cursor is cleared with it.
+    public func recordTruncation(messageID: UUID) throws {
+        guard let row = try storedMessage(id: messageID) else { return }
+        row.deliveryStateRaw = StoredDeliveryState.interrupted.rawValue
+        row.statusRaw = MessageStatus.interrupted.rawValue
+        row.turnID = nil
+        row.lastSeq = nil
         try modelContext.save()
     }
 
@@ -256,10 +280,11 @@ public actor SwiftDataSessionRepository {
     @discardableResult
     public func advanceTurn(messageID: UUID, turnID: String, seq: Int) throws -> Bool {
         guard let row = try storedMessage(id: messageID) else { return false }
-        let current = StoredMapping.cursor(from: row) ?? ResumeCursor(turnID: turnID)
-        guard current.accepts(turnID: turnID, seq: seq), let advanced = current.advanced(to: seq) else {
-            return false
-        }
+        let current = StoredMapping.cursor(from: row) ?? TurnCursor(turnID: turnID)
+        // A frame from another turn is never this cursor's business — letting it
+        // through would mark one turn's progress with another's sequence.
+        guard current.turnID == turnID, current.shouldAccept(seq: seq) else { return false }
+        let advanced = current.advanced(to: seq)
         row.turnID = advanced.turnID
         row.lastSeq = advanced.lastSeq
         try modelContext.save()
@@ -267,7 +292,7 @@ public actor SwiftDataSessionRepository {
     }
 
     /// What to do about a turn on return: it finished, it's still running on the
-    /// host, or it's gone.
+    /// host, it failed, or it's gone.
     ///
     /// A message with no recorded delivery state never streamed, so there is
     /// nothing to reconcile — `.settled`.
@@ -276,7 +301,11 @@ public actor SwiftDataSessionRepository {
             let row = try storedMessage(id: messageID),
             let state = StoredMapping.deliveryState(from: row)
         else { return .settled }
-        return TurnReconciliation.resolve(state: state, cursor: StoredMapping.cursor(from: row))
+        return TurnReconciliation.resolve(
+            state: state,
+            cursor: StoredMapping.cursor(from: row),
+            failure: StoredMapping.failure(from: row)
+        )
     }
 
     /// Every turn that needs attention after a relaunch, with its outcome.
@@ -294,7 +323,14 @@ public actor SwiftDataSessionRepository {
         )
         return try modelContext.fetch(descriptor).compactMap { row in
             guard let state = StoredMapping.deliveryState(from: row) else { return nil }
-            return (row.id, TurnReconciliation.resolve(state: state, cursor: StoredMapping.cursor(from: row)))
+            return (
+                row.id,
+                TurnReconciliation.resolve(
+                    state: state,
+                    cursor: StoredMapping.cursor(from: row),
+                    failure: StoredMapping.failure(from: row)
+                )
+            )
         }
     }
 

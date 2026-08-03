@@ -49,13 +49,48 @@ enum StoredMapping {
 
     /// The status a restored session comes back with.
     ///
-    /// Only two outcomes are reachable from disk. `orphaned` is a durable fact
-    /// about pairing and survives a relaunch; everything else in `SessionStatus`
-    /// describes a live link, and a session restored from disk has none yet —
-    /// claiming `idle` here would let the composer offer to send over a
-    /// connection that was never opened (FR-053).
+    /// Two rules, and they answer different questions:
+    ///
+    /// **What survives.** `.error(_)` is a historical fact — the turn already
+    /// failed, and nothing on next launch can re-derive it. Losing it means the
+    /// user reopens the app to find yesterday's failed conversation sitting at
+    /// `idle`, unable to tell whether their message was ever answered. So the
+    /// whole enum is persisted, not a flag.
+    ///
+    /// **What is normalized away.** `idle` / `disconnected` / `connecting` /
+    /// `streaming` all describe a live link, and a session read from disk has
+    /// none — the process that owned it is gone. All four come back
+    /// `.disconnected`.
+    ///
+    /// `idle` is included deliberately, and this is the one place it matters:
+    /// `canSend` is true for `.idle` alone, so restoring it would let the
+    /// composer offer to send over a connection that was never opened (FR-053).
+    /// "Idle" means *connected and not busy* — after a relaunch the first half
+    /// is false, so the state is not merely stale, it is wrong.
+    ///
+    /// Orphaning outranks any stored status: it is a fact about pairing rather
+    /// than about a connection, and an unpaired host's session must not present
+    /// as sendable however it was last stored.
     static func status(from stored: StoredSession) -> SessionStatus {
-        (stored.isOrphaned || stored.hostID == nil) ? .orphaned : .disconnected
+        guard !stored.isOrphaned, stored.hostID != nil else { return .orphaned }
+        guard let decoded = decodeStatus(stored.statusJSON) else { return .disconnected }
+        switch decoded {
+        case .error, .orphaned:
+            return decoded
+        case .idle, .disconnected, .connecting, .streaming:
+            return .disconnected
+        }
+    }
+
+    /// Decodes a stored status, treating corruption as absence.
+    ///
+    /// A blob that fails to decode — a schema that moved, a truncated write —
+    /// must not make the conversation unreadable. The caller falls back to
+    /// `.disconnected`, which is the safe direction: it disables sending until a
+    /// real connection exists rather than enabling it on a bad guess.
+    private static func decodeStatus(_ json: String?) -> SessionStatus? {
+        guard let json, let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(SessionStatus.self, from: data)
     }
 
     /// `availability` is deliberately not persisted, so a restored backend comes
@@ -76,12 +111,26 @@ enum StoredMapping {
 
     /// The resume cursor for a message, if it has one.
     ///
-    /// Both halves must be present — a `turnID` with no sequence, or the
-    /// reverse, is not a resume point and is treated as absent rather than
-    /// patched up with a default.
-    static func cursor(from stored: StoredMessage) -> ResumeCursor? {
-        guard let turnID = stored.turnID, let lastSeq = stored.lastSeq else { return nil }
-        return ResumeCursor(turnID: turnID, lastSeq: lastSeq)
+    /// `lastSeq` may legitimately be `nil` — a turn can be opened before its
+    /// first frame arrives — so only `turnID` is required. Without it there is
+    /// no turn to address on the host, and a sequence number alone is not a
+    /// resume point.
+    static func cursor(from stored: StoredMessage) -> TurnCursor? {
+        guard let turnID = stored.turnID else { return nil }
+        return TurnCursor(turnID: turnID, lastSeq: stored.lastSeq)
+    }
+
+    /// Failure detail for a message, if the turn failed and the bridge sent it.
+    ///
+    /// Both halves are required: a `failed_at_ms` with no tool-call count is a
+    /// partially-decoded frame, and rendering "failed 8 minutes in, after 0 tool
+    /// calls" from it would state a number nobody reported.
+    static func failure(from stored: StoredMessage) -> TurnFailure? {
+        guard
+            let failedAtMs = stored.failedAtMs,
+            let toolCallsCompleted = stored.toolCallsCompleted
+        else { return nil }
+        return TurnFailure(failedAtMs: failedAtMs, toolCallsCompleted: toolCallsCompleted)
     }
 
     static func deliveryState(from stored: StoredMessage) -> StoredDeliveryState? {
@@ -109,8 +158,18 @@ enum StoredMapping {
             title: session.title,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
-            isOrphaned: session.status == .orphaned
+            isOrphaned: session.status == .orphaned,
+            statusJSON: encodeStatus(session.status)
         )
+    }
+
+    /// Encodes a status for storage, or `nil` if it cannot be encoded.
+    ///
+    /// A failure here loses the status but must never lose the session — the
+    /// row still writes, and reads back `.disconnected`.
+    static func encodeStatus(_ status: SessionStatus) -> String? {
+        guard let data = try? JSONEncoder().encode(status) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     /// Applies a domain message onto its stored row.
@@ -128,12 +187,17 @@ enum StoredMapping {
     ///
     /// `hostID` is absent by design: a session's machine is fixed at creation
     /// and never moves (FR-030), so a save path that could change it would be a
-    /// way to violate that invariant by accident. Orphaning is a pairing fact
-    /// and has its own path (`orphanSessions(ofHost:)`), so an ordinary save
-    /// cannot un-orphan a session either.
+    /// way to violate that invariant by accident.
+    ///
+    /// `isOrphaned` is likewise absent — orphaning is a pairing fact with its
+    /// own path (`orphanSessions(ofHost:)`), so an ordinary save cannot
+    /// un-orphan a session. `statusJSON` *is* written, because a turn ending in
+    /// `.error` must survive a relaunch; on read, orphaning still wins over
+    /// whatever status was stored.
     static func apply(_ session: Session, to stored: StoredSession) {
         stored.title = session.title
         stored.backendID = session.backendID
         stored.updatedAt = session.updatedAt
+        stored.statusJSON = encodeStatus(session.status)
     }
 }

@@ -311,11 +311,11 @@ struct SwiftDataSessionRepositoryTests {
         try await repository.recordTurn(
             messageID: message.id,
             state: .detached,
-            cursor: ResumeCursor(turnID: "turn-9", lastSeq: 42)
+            cursor: TurnCursor(turnID: "turn-9", lastSeq: 42)
         )
 
         let reconciliation = try await repository.reconcile(messageID: message.id)
-        #expect(reconciliation == .stillRunning(ResumeCursor(turnID: "turn-9", lastSeq: 42)))
+        #expect(reconciliation == .stillRunning(TurnCursor(turnID: "turn-9", lastSeq: 42)))
     }
 
     @Test("a turn with no cursor reconciles as lost rather than resumable")
@@ -349,14 +349,14 @@ struct SwiftDataSessionRepositoryTests {
         try await repository.recordTurn(
             messageID: live.id,
             state: .detached,
-            cursor: ResumeCursor(turnID: "turn-1", lastSeq: 7)
+            cursor: TurnCursor(turnID: "turn-1", lastSeq: 7)
         )
         try await repository.recordTurn(messageID: dead.id, state: .streaming, cursor: nil)
 
         let pending = try await repository.pendingTurns()
         let outcomes = Dictionary(uniqueKeysWithValues: pending.map { ($0.messageID, $0.outcome) })
 
-        #expect(outcomes[live.id] == .stillRunning(ResumeCursor(turnID: "turn-1", lastSeq: 7)))
+        #expect(outcomes[live.id] == .stillRunning(TurnCursor(turnID: "turn-1", lastSeq: 7)))
         #expect(outcomes[dead.id] == .lost)
         // Only the lost one may be retried — a live turn must never offer it,
         // or the host ends up running the same work twice (Amendment C §1.5).
@@ -461,14 +461,152 @@ struct SwiftDataSessionRepositoryTests {
         try await writer.recordTurn(
             messageID: message.id,
             state: .detached,
-            cursor: ResumeCursor(turnID: "turn-1", lastSeq: 3)
+            cursor: TurnCursor(turnID: "turn-1", lastSeq: 3)
         )
 
         let afterRelaunch = SwiftDataSessionRepository(container: store)
         let outcome = try await afterRelaunch.reconcile(messageID: message.id)
 
-        #expect(outcome == .stillRunning(ResumeCursor(turnID: "turn-1", lastSeq: 3)))
+        #expect(outcome == .stillRunning(TurnCursor(turnID: "turn-1", lastSeq: 3)))
         #expect(!outcome.allowsRetry)
+    }
+
+    @Test("failure detail survives a force-quit, so the user is not left with a bare Error")
+    func failureDetailSurvivesRelaunch() async throws {
+        let store = try SessionStoreContainer.inMemory()
+        let message = Self.makeMessage(text: "died here", status: .failed)
+
+        // The turn fails while the user is away, and they force-quit before ever
+        // seeing the message — the exact case background resume exists for.
+        let writer = SwiftDataSessionRepository(container: store)
+        try await writer.create(Self.makeSession(messages: [message]))
+        try await writer.recordTurn(
+            messageID: message.id,
+            state: .failed,
+            cursor: nil,
+            failure: TurnFailure(failedAtMs: 480_000, toolCallsCompleted: 3)
+        )
+
+        let afterRelaunch = SwiftDataSessionRepository(container: store)
+        let outcome = try await afterRelaunch.reconcile(messageID: message.id)
+
+        // "failed 8 minutes in, after 3 tool calls", not "Error".
+        #expect(outcome == .failed(TurnFailure(failedAtMs: 480_000, toolCallsCompleted: 3)))
+        #expect(outcome.allowsRetry)
+    }
+
+    @Test("truncated output is stored as interrupted, never as complete")
+    func truncationIsNeverComplete() async throws {
+        let store = try SessionStoreContainer.inMemory()
+        let message = Self.makeMessage(text: "half an answ", status: .streaming)
+        let session = Self.makeSession(messages: [message])
+        let writer = SwiftDataSessionRepository(container: store)
+        try await writer.create(session)
+        try await writer.recordTurn(
+            messageID: message.id,
+            state: .streaming,
+            cursor: TurnCursor(turnID: "turn-1", lastSeq: 4)
+        )
+
+        try await writer.recordTruncation(messageID: message.id)
+
+        let afterRelaunch = SwiftDataSessionRepository(container: store)
+        // Presenting a cut-off answer as whole is the one failure the user
+        // cannot detect for themselves (contract §3.3).
+        #expect(try await afterRelaunch.reconcile(messageID: message.id) == .lost)
+        let loaded = try #require(try await afterRelaunch.session(id: session.id))
+        #expect(loaded.messages.first?.status == .interrupted)
+        #expect(loaded.messages.first?.status.isRetryable == true)
+    }
+
+    @Test("a frame from another turn never advances this turn's cursor")
+    func foreignFrameIsRejected() async throws {
+        let store = try SessionStoreContainer.inMemory()
+        let message = Self.makeMessage(text: "", status: .streaming)
+        let repository = SwiftDataSessionRepository(container: store)
+        try await repository.create(Self.makeSession(messages: [message]))
+        try await repository.recordTurn(
+            messageID: message.id,
+            state: .streaming,
+            cursor: TurnCursor(turnID: "turn-1", lastSeq: 3)
+        )
+
+        #expect(try await repository.advanceTurn(messageID: message.id, turnID: "turn-2", seq: 9) == false)
+        #expect(try await repository.advanceTurn(messageID: message.id, turnID: "turn-1", seq: 2) == false)
+        #expect(try await repository.advanceTurn(messageID: message.id, turnID: "turn-1", seq: 4))
+
+        #expect(try await repository.reconcile(messageID: message.id)
+            == .stillRunning(TurnCursor(turnID: "turn-1", lastSeq: 4)))
+    }
+
+    @Test("a turn opened before its first frame has a cursor with no sequence")
+    func cursorBeforeFirstFrame() async throws {
+        let store = try SessionStoreContainer.inMemory()
+        let message = Self.makeMessage(text: "", status: .streaming)
+        let repository = SwiftDataSessionRepository(container: store)
+        try await repository.create(Self.makeSession(messages: [message]))
+
+        // nil lastSeq, not 0 — seq counts from 0, so 0 would claim frame 0 was
+        // already accepted and the first chunk would be silently dropped.
+        try await repository.recordTurn(
+            messageID: message.id,
+            state: .detached,
+            cursor: TurnCursor(turnID: "turn-1")
+        )
+
+        #expect(try await repository.reconcile(messageID: message.id)
+            == .stillRunning(TurnCursor(turnID: "turn-1", lastSeq: nil)))
+        #expect(try await repository.advanceTurn(messageID: message.id, turnID: "turn-1", seq: 0))
+    }
+
+    @Test("a session that ended in an error still reads as failed after a relaunch")
+    func errorStatusSurvivesRelaunch() async throws {
+        let store = try SessionStoreContainer.inMemory()
+        let writer = SwiftDataSessionRepository(container: store)
+        let session = Self.makeSession()
+        try await writer.create(session)
+
+        try await writer.save(session.withStatus(.error(.connectionLost), at: Self.t0))
+
+        // A failure is a historical fact — nothing on next launch can re-derive
+        // it, so losing it would show yesterday's failed conversation as idle.
+        let afterRelaunch = SwiftDataSessionRepository(container: store)
+        let loaded = try #require(try await afterRelaunch.session(id: session.id))
+        #expect(loaded.status == .error(.connectionLost))
+        #expect(loaded.canSend == false)
+    }
+
+    @Test("a live connection state is normalized away on read")
+    func transientStatesAreNormalized() async throws {
+        let store = try SessionStoreContainer.inMemory()
+        let writer = SwiftDataSessionRepository(container: store)
+        let session = Self.makeSession()
+        try await writer.create(session)
+
+        // The app is killed mid-stream, leaving `streaming` on disk.
+        try await writer.save(session.withStatus(.streaming, at: Self.t0))
+
+        let afterRelaunch = SwiftDataSessionRepository(container: store)
+        let loaded = try #require(try await afterRelaunch.session(id: session.id))
+        // That stream died with the process; restoring it would show a
+        // connection that does not exist.
+        #expect(loaded.status == .disconnected)
+        #expect(loaded.canSend == false)
+    }
+
+    @Test("orphaning outranks whatever status was stored")
+    func orphanWinsOverStoredStatus() async throws {
+        let store = try SessionStoreContainer.inMemory()
+        let repository = SwiftDataSessionRepository(container: store)
+        let session = Self.makeSession()
+        try await repository.create(session)
+        try await repository.save(session.withStatus(.idle, at: Self.t0))
+
+        try await repository.orphanSessions(ofHost: Self.hostA)
+
+        let loaded = try #require(try await repository.session(id: session.id))
+        #expect(loaded.status == .orphaned)
+        #expect(loaded.canSend == false)
     }
 
     // MARK: - Backends

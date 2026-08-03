@@ -33,11 +33,25 @@ final class StoredSession {
 
     /// The host was unpaired: read-only history, never auto-deleted (FR-027).
     ///
-    /// The only piece of `SessionStatus` worth persisting. The rest —
-    /// `connecting`, `idle`, `streaming`, `error` — describe a live connection,
-    /// and restoring one of those from disk would claim a link that does not
-    /// exist yet; a restored session comes back `.disconnected`.
+    /// Kept as its own column even though `statusJSON` can also spell
+    /// `.orphaned`: attribution is what queries filter on, and a predicate over
+    /// a JSON blob is not one SwiftData can push down to the store.
     var isOrphaned: Bool = false
+
+    /// JSON-encoded `SessionStatus`, or `nil` for a row written before it was
+    /// persisted.
+    ///
+    /// Only `.error(_)` genuinely needs to survive a relaunch, and it is the
+    /// reason the whole enum is stored rather than a flag. A failure is a
+    /// *historical fact* — nothing on next launch can re-derive it, unlike
+    /// reachability, which is simply re-probed. Dropping it means the user kills
+    /// the app and finds yesterday's failed conversation sitting at `idle`, with
+    /// no way to tell whether their message was ever answered.
+    ///
+    /// The transient connection states are normalized away on read (see
+    /// `StoredMapping.status(from:)`) rather than at write time, so a crash
+    /// mid-stream cannot leave an un-normalizable row behind.
+    var statusJSON: String?
 
     /// Cascade: deleting a conversation takes its transcript with it. This is
     /// the *only* cascade in the schema — unpairing a host deliberately does not
@@ -52,7 +66,8 @@ final class StoredSession {
         title: String,
         createdAt: Date,
         updatedAt: Date,
-        isOrphaned: Bool = false
+        isOrphaned: Bool = false,
+        statusJSON: String? = nil
     ) {
         self.id = id
         self.hostID = hostID
@@ -61,6 +76,7 @@ final class StoredSession {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.isOrphaned = isOrphaned
+        self.statusJSON = statusJSON
         self.messages = []
     }
 }
@@ -85,11 +101,27 @@ final class StoredMessage {
 
     /// Background-resume bookkeeping (Amendment C §1.3). Both `nil` unless this
     /// message is an assistant turn that was streaming.
+    ///
+    /// `lastSeq` is optional rather than sentinel-encoded: `seq` counts from 0
+    /// per turn, so `0` would silently skip the first frame and `-1` would be a
+    /// sentinel impersonating a sequence number. `nil` means "no frame accepted
+    /// yet", which is a different fact from "accepted frame 0".
     var turnID: String?
     var lastSeq: Int?
     /// Raw `StoredDeliveryState`. `nil` means the message never streamed, so
     /// there is nothing to reconcile on return.
     var deliveryStateRaw: String?
+
+    /// Failure detail from `x-localis-turn-end` (contract §3.1(d)), so the app
+    /// can still say *how* a turn failed after a relaunch.
+    ///
+    /// These are on disk for one specific reason: the user may force-quit before
+    /// ever seeing the failure. Living only in the stream event would mean a turn
+    /// that died while they were away comes back as a bare "Error" instead of
+    /// "failed 8 minutes in, after 3 tool calls" — losing exactly the detail that
+    /// tells them whether retrying is worth it. Both `nil` unless the turn failed.
+    var failedAtMs: Int?
+    var toolCallsCompleted: Int?
 
     var session: StoredSession?
 

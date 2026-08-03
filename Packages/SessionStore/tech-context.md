@@ -14,11 +14,11 @@ red_lines:
   - No UI and no networking. This layer stores what it is given; it does not fetch or render.
   - All writes are actor-isolated and `async`. Nothing here runs on the main thread.
 roles:
-  Types: [SessionQuery, ResumeCursor, TurnReconciliation, HostAttributionPlan, UnattributedHost]
+  Types: [SessionQuery, TurnReconciliation, HostAttributionPlan, UnattributedHost]
   Config: [SessionStoreContainer]
   Repo: [SessionRepository, SwiftDataSessionRepository, StoredModels, StoredMapping]
 test: swift test --package-path Packages/SessionStore
-owns: [SessionRepository, InMemorySessionRepository, SwiftDataSessionRepository, SessionQuery, ResumeCursor, TurnReconciliation, HostAttributionPlan]
+owns: [SessionRepository, InMemorySessionRepository, SwiftDataSessionRepository, SessionQuery, TurnReconciliation, HostAttributionPlan]
 ---
 
 # SessionStore Context
@@ -61,25 +61,49 @@ moved.
 
 ## Restored state
 
-A session read from disk comes back `.disconnected` or `.orphaned` — never
-`.idle`. There is no live link to a host at read time, so `canSend` must be
-false until one is opened (FR-053). Claiming `idle` would let the composer offer
-to send over a connection that was never established.
+A session read from disk comes back `.disconnected`, `.orphaned`, or the
+`.error(_)` it ended on — never `.idle`. Sending is gated on a live link, and at
+read time there is none, so `canSend` must be false until one is opened
+(FR-053). `idle` means *connected and not busy*; after a relaunch the first half
+is untrue, so restoring it would let the composer offer to send over a
+connection that was never established.
+
+`.error(_)` is the exception, for a reason the transient states don't share: a
+failure is a *historical fact*. Reachability is re-probed on the next connect,
+but nothing on next launch can re-derive that yesterday's turn died — dropping
+it leaves the user with a conversation sitting at `idle` and no way to tell
+whether their message was ever answered. So the whole `SessionStatus` is
+persisted as JSON and normalized on read, rather than reduced to a flag.
 
 ## Background resume reconciliation
 
 The host keeps producing while the app is away, so on return the layer must say
-which of three things happened. `TurnReconciliation.reconcile(messageID:)`
-answers with exactly one:
+which of four things happened. `reconcile(messageID:)` answers with exactly one:
 
-- `.settled` — the stream finished (or already failed and told the user).
-- `.stillRunning(ResumeCursor)` — resumable from `(turnID, lastSeq)`.
-- `.lost` — the turn died mid-stream and only this case sets `allowsRetry`.
+- `.settled` — the stream finished.
+- `.stillRunning(TurnCursor)` — resumable from `(turnID, lastSeq)`.
+- `.failed(TurnFailure)` — it died and we know how far it got: "failed 8 minutes
+  in, after 3 tool calls" rather than a bare "Error" (contract §3.1(d)).
+- `.lost` — the turn died with nothing left to resume.
+
+Only `.lost` and `.failed` set `allowsRetry`. Retrying a turn the host is still
+generating would start a second run on the user's machine — a real side effect,
+not a display difference.
 
 `detached` (app backgrounded, host still running) and `interrupted` (the turn
-actually died) are never collapsed into one state — Amendment C §1.5. A
-`detached` message with no cursor is `.lost`, not silently resumable: without a
-sequence there is no safe point to resume from.
+actually died) are stored as distinct states and never collapsed — Amendment C
+§1.5. A `detached` message with no cursor is `.lost`, not silently resumable:
+without a sequence there is no safe point to resume from.
+
+`failedAtMs` / `toolCallsCompleted` are on disk rather than only on the stream
+event because the user may force-quit before the failure is ever shown. A
+`failed` row with no recorded detail resolves to `.settled`, not to a zeroed
+`TurnFailure` — "failed 0 minutes in, after 0 tool calls" would state a number
+nobody reported.
+
+`recordTruncation(messageID:)` stores cut-off output as `interrupted`, never
+`complete` (contract §3.3). Marking a partial reply complete presents it as the
+whole answer, and the user has no way to learn the rest existed.
 
 ## Migration
 

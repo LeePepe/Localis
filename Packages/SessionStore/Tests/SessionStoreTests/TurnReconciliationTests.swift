@@ -3,47 +3,44 @@ import Testing
 
 @testable import SessionStore
 
-/// What the store knows about a turn when the app comes back (Amendment C §1.5).
-///
-/// The dangerous conflation this suite guards against: `detached` (the link
-/// dropped but the host is still generating) and `interrupted` (the content is
-/// genuinely gone). Offering "retry" on a `detached` turn runs a *second* job on
-/// the user's machine — so the two must never collapse into one state.
-@Suite("Turn reconciliation on return")
+import LocalisModels
+
+/// The store's answer to "what happened while the app was away" (Amendment C
+/// §1.5). Several of the outcomes look similar and mean very different things,
+/// so each one is pinned here.
+@Suite("Turn reconciliation")
 struct TurnReconciliationTests {
-    private static func cursor(_ seq: Int) -> ResumeCursor {
-        ResumeCursor(turnID: "turn-1", lastSeq: seq)
-    }
+    private static let cursor = TurnCursor(turnID: "turn-1", lastSeq: 7)
 
     @Test("a completed turn needs nothing on return")
     func completeIsSettled() {
         #expect(TurnReconciliation.resolve(state: .complete, cursor: nil) == .settled)
-        #expect(TurnReconciliation.resolve(state: .complete, cursor: Self.cursor(4)) == .settled)
     }
 
-    @Test("a failed turn is settled — it already told the user it failed")
-    func failedIsSettled() {
+    @Test("a failed turn reports how far it got, not just that it failed")
+    func failedCarriesDetail() {
+        let failure = TurnFailure(failedAtMs: 480_000, toolCallsCompleted: 3)
+
+        let outcome = TurnReconciliation.resolve(state: .failed, cursor: nil, failure: failure)
+
+        // "failed 8 minutes in, after 3 tool calls" — the detail the user needs
+        // to decide whether retrying is worth it.
+        #expect(outcome == .failed(failure))
+    }
+
+    @Test("a failure with no recorded detail does not invent one")
+    func failedWithoutDetailIsSettled() {
+        // A zeroed TurnFailure would render as "failed 0 minutes in, after 0
+        // tool calls" — a number nobody reported.
         #expect(TurnReconciliation.resolve(state: .failed, cursor: nil) == .settled)
     }
 
     @Test("a detached turn with a cursor resumes from that cursor")
-    func detachedResumes() {
-        let resumed = TurnReconciliation.resolve(state: .detached, cursor: Self.cursor(11))
-
-        #expect(resumed == .stillRunning(Self.cursor(11)))
-    }
-
-    @Test("an interrupted turn is lost and may be retried")
-    func interruptedIsLost() {
-        #expect(TurnReconciliation.resolve(state: .interrupted, cursor: Self.cursor(3)) == .lost)
-    }
-
-    @Test("a turn left streaming by a killed process is not still streaming")
-    func streamingDoesNotSurviveRestart() {
-        // The stream lived in a process that no longer exists. With a cursor the
-        // host may still be working; without one there is nothing to resume from.
-        #expect(TurnReconciliation.resolve(state: .streaming, cursor: Self.cursor(2)) == .stillRunning(Self.cursor(2)))
-        #expect(TurnReconciliation.resolve(state: .streaming, cursor: nil) == .lost)
+    func detachedWithCursorResumes() {
+        #expect(
+            TurnReconciliation.resolve(state: .detached, cursor: Self.cursor)
+                == .stillRunning(Self.cursor)
+        )
     }
 
     @Test("a detached turn without a cursor is lost, not silently resumable")
@@ -51,17 +48,77 @@ struct TurnReconciliationTests {
         #expect(TurnReconciliation.resolve(state: .detached, cursor: nil) == .lost)
     }
 
-    @Test("only a lost turn may offer retry — running turns must not")
-    func retryIsOfferedOnlyWhenContentIsGone() {
+    @Test("a turn left streaming by a killed process is not still streaming")
+    func streamingResolvesLikeDetached() {
+        // Reaching reconciliation at all means the process that owned the stream
+        // is gone, so `streaming` can only mean resumable or lost.
+        #expect(
+            TurnReconciliation.resolve(state: .streaming, cursor: Self.cursor)
+                == .stillRunning(Self.cursor)
+        )
+        #expect(TurnReconciliation.resolve(state: .streaming, cursor: nil) == .lost)
+    }
+
+    @Test("an interrupted turn is lost and may be retried")
+    func interruptedIsLost() {
+        let outcome = TurnReconciliation.resolve(state: .interrupted, cursor: Self.cursor)
+
+        // Even with a cursor: interrupted means the content is gone, so there is
+        // nothing left on the host to resume from.
+        #expect(outcome == .lost)
+        #expect(outcome.allowsRetry)
+    }
+
+    @Test("a running turn must never offer retry")
+    func onlyFinishedTurnsAllowRetry() {
+        // Retrying a turn the host is still generating starts a second run on
+        // the user's machine — a real side effect, not a display difference.
+        #expect(TurnReconciliation.stillRunning(Self.cursor).allowsRetry == false)
+        #expect(TurnReconciliation.settled.allowsRetry == false)
         #expect(TurnReconciliation.lost.allowsRetry)
-        #expect(!TurnReconciliation.stillRunning(Self.cursor(1)).allowsRetry)
-        #expect(!TurnReconciliation.settled.allowsRetry)
+        #expect(
+            TurnReconciliation.failed(TurnFailure(failedAtMs: 1, toolCallsCompleted: 0)).allowsRetry
+        )
     }
 
     @Test("every delivery state resolves — no unhandled case")
-    func allStatesResolve() {
+    func everyStateResolves() {
         for state in StoredDeliveryState.allCases {
-            _ = TurnReconciliation.resolve(state: state, cursor: Self.cursor(1))
+            _ = TurnReconciliation.resolve(state: state, cursor: Self.cursor)
+            _ = TurnReconciliation.resolve(state: state, cursor: nil)
         }
+    }
+}
+
+/// `TurnFailure` is the difference between "Error" and "failed 8 minutes in,
+/// after 3 tool calls" (contract §3.1(d)).
+@Suite("Turn failure detail")
+struct TurnFailureTests {
+    @Test("failure detail survives a round trip")
+    func roundTrips() throws {
+        let failure = TurnFailure(failedAtMs: 480_000, toolCallsCompleted: 3)
+
+        let data = try JSONEncoder().encode(failure)
+        let decoded = try JSONDecoder().decode(TurnFailure.self, from: data)
+
+        #expect(decoded == failure)
+    }
+
+    @Test("a malformed negative value is clamped rather than dropping the record")
+    func negativesAreClamped() {
+        // Losing the whole record over one bad number would leave the bare
+        // "Error" this type exists to prevent.
+        let failure = TurnFailure(failedAtMs: -1, toolCallsCompleted: -5)
+
+        #expect(failure.failedAtMs == 0)
+        #expect(failure.toolCallsCompleted == 0)
+    }
+
+    @Test("a turn that failed before any tool call is still a valid record")
+    func zeroToolCallsIsValid() {
+        let failure = TurnFailure(failedAtMs: 1_200, toolCallsCompleted: 0)
+
+        #expect(failure.toolCallsCompleted == 0)
+        #expect(failure.failedAtMs == 1_200)
     }
 }
