@@ -48,12 +48,17 @@ turn — the message is settled to `.complete` rather than stranded as
 
 ## The reason a turn failed is carried, not dropped
 
-`TransportEvent.failed` carries a `LocalisError`, and a bare `case .failed:`
-compiles while silently discarding it. That leaves the user with "Error" and no
-way to tell a revoked token from a dropped connection — one needs re-pairing,
-the other needs nothing but a retry. The reason is bound and lands on
-`Session.status` as `.error(_)`, which is where it survives a relaunch: *why* a
-turn died cannot be recomputed from anything once the process exits.
+A `.turnEnd` frame carries an `outcome` and, on failure, an `error.code`; a bare
+`case .turnEnd:` compiles while silently discarding both. That leaves the user
+with "Error" and no way to tell a revoked token from a dropped connection — one
+needs re-pairing, the other needs nothing but a retry. The code is mapped by
+`LocalisError(wireCode:)` and lands on `Session.status` as `.error(_)`, which is
+where it survives a relaunch: *why* a turn died cannot be recomputed from
+anything once the process exits.
+
+The bridge's own `error.message` is never read, here or anywhere — it can
+contain absolute paths (constitution I / FR-025), and the wording the user sees
+is derived locally from the case.
 
 Anything thrown that is not already a `LocalisError` is mapped here rather than
 let through. Conformers are supposed to map at their own boundary, so a foreign
@@ -89,19 +94,48 @@ running fine on the host; the link is what is gone, and an error banner would be
 a lie about the work. `canSend` stays false either way, which is correct —
 starting a second turn while the first generates is the harm the amendment names.
 
-## Why `.detached` does not appear yet
+## Where the cursor comes from
 
-The cursor is threaded through the stream loop but is always `nil`, because
-`TransportEvent` is `.chunk` / `.completed` / `.failed` and none of the three
-carries a turn id or a `seq`. `.detached` is therefore not an unimplemented
-branch — it is a value the current seam **cannot express**. Same root cause
-keeps `TurnFailure` off the message: `.failed(LocalisError)` has nowhere to put
-`failed_at_ms` and `tool_calls_completed`, and filling them with zeros would
-fabricate "failed 0 minutes in" — the exact claim `TurnReconciliation` refuses
-to make.
+`AgentTransport.send` returns a `TurnStream`: a `turnID` read from the response
+header, plus the frames. The cursor is seeded from that id **before the first
+frame arrives**, which is what makes the worst case decidable — a connection
+that dies before any event is still a turn the Mac is generating, and without
+the id it would be indistinguishable from one that never started.
 
-Both resolve the day the transport yields `SequencedEvent`: assigning the cursor
-is the whole change, because the settlement rule already reads it.
+`turnID` is optional because a bridge older than the resume contract omits the
+header. That is a real case, not one to assume away: no id means no cursor,
+which means a break settles `.interrupted` rather than `.detached`. Correct —
+there is nothing to resume.
+
+Frames are deduped against the cursor before anything else. On resume the bridge
+may replay frames around the boundary, and appending a replayed delta shows the
+user duplicated words (SC-003). Two details that look like oversights and are
+not:
+
+- A frame with **no `seq` is always kept**. Absent means "this host cannot
+  resume", not "sequence zero", and a healthy stream repeats words all the time.
+- The check is `shouldAccept(seq:)`, not `accepts(turnID:seq:)`. A
+  `SequencedEvent` carries no turn id, and one `TurnStream` is one turn's frames
+  by construction. Passing the cursor's own id back in would look like the
+  stronger check while comparing a value to itself.
+
+## A failure the bridge under-reports is still a failure
+
+`.turnEnd(outcome: .failed)` settles the message `.failed` whether or not
+`failed_at_ms` and `tool_calls_completed` came with it. `TurnFailure` is built
+only when **both** are present — filling a missing one with `0` would assert
+"failed 0 minutes in, after 0 tool calls", and a half-invented record is the one
+shape that reads as true and is not. The UI already drops the detail line when
+it is absent.
+
+This differs from `TurnReconciliation`, which degrades a detail-less failure to
+`.settled` and loses both the failure and the retry. That path is not wrong for
+what it can see — two persisted columns after a relaunch. This one observed the
+frame itself, which is strictly more information, so there is nothing to infer.
+
+An outcome this build cannot name (`.unknown`) does **not** settle the message.
+The loop keeps reading: the frames that follow decide, and guessing `.complete`
+would report an unfinished turn as answered.
 
 ## Determinism
 

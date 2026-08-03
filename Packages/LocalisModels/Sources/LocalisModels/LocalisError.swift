@@ -154,4 +154,39 @@ public enum LocalisError: Error, Codable, Hashable, Sendable {
             return "That agent isn't available right now."
         }
     }
+
+    /// Maps the bridge's `error.code` into this vocabulary (contract §6).
+    ///
+    /// It lives here, not in each layer, for the same reason the vocabulary
+    /// does: three copies are three implementations that can each be wrong
+    /// differently, and the one that drifts stays invisible until a user hits
+    /// exactly that code on exactly that path.
+    ///
+    /// Two deliberate choices about codes this build does not recognise:
+    ///
+    /// - **Non-optional return.** Handing back `nil` invites the caller to
+    ///   write `?? nothing-happened`, which reports a failed turn as fine. A
+    ///   code we cannot name is still a failure.
+    /// - **`malformedResponse`, which is retryable.** "We don't know what went
+    ///   wrong" and "we know a retry cannot help" are different claims, and
+    ///   defaulting to the second takes the retry away from a user whose next
+    ///   attempt might well have worked.
+    ///
+    /// The code is never used as display text — `userMessage` is derived from
+    /// the case. An unrecognised value may be the bridge's own `error.message`
+    /// passed in by mistake, and that can contain absolute paths
+    /// (constitution I / FR-025).
+    public init(wireCode: String?) {
+        switch wireCode {
+        case "invalid_token": self = .unauthorized
+        case "token_revoked": self = .tokenRevoked
+        case "unknown_model": self = .unknownBackend
+        case "session_busy": self = .sessionBusy
+        case "backend_unavailable": self = .backendUnavailable(reason: nil)
+        case "unknown_turn": self = .unknownTurn
+        case "turn_expired": self = .turnExpired
+        case "turn_not_yours": self = .turnNotYours
+        default: self = .malformedResponse
+        }
+    }
 }

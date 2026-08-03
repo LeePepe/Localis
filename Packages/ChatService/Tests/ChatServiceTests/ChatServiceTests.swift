@@ -8,26 +8,69 @@ import SessionStore
 import TransportKit
 
 /// Transport fake that replays a fixed event script.
+///
+/// `turnID` defaults to nil — a bridge older than the resume contract sends no
+/// header, and that is the case a fake must be able to express, because it is
+/// what makes a broken turn `.interrupted` rather than `.detached`.
 private struct ScriptedTransport: AgentTransport {
-    let events: [TransportEvent]
+    let events: [SequencedEvent]
     /// When set, the stream throws after replaying `events`.
     let failure: (any Error)?
+    let turnID: String?
 
-    init(events: [TransportEvent], failure: (any Error)? = nil) {
+    init(events: [SequencedEvent], failure: (any Error)? = nil, turnID: String? = nil) {
         self.events = events
         self.failure = failure
+        self.turnID = turnID
     }
 
-    func send(_ request: TransportRequest) async throws -> AsyncThrowingStream<TransportEvent, Error> {
+    /// Convenience for the many tests that only care about assistant text.
+    init(text: [String], failure: (any Error)? = nil, turnID: String? = nil) {
+        self.init(
+            events: text.enumerated().map { SequencedEvent(seq: $0.offset, event: .delta($0.element)) },
+            failure: failure,
+            turnID: turnID
+        )
+    }
+
+    func send(_ request: TurnRequest) async throws -> TurnStream {
         let events = events
         let failure = failure
-        return AsyncThrowingStream { continuation in
-            for event in events { continuation.yield(event) }
-            continuation.finish(throwing: failure)
-        }
+        return TurnStream(
+            turnID: turnID,
+            events: AsyncThrowingStream { continuation in
+                for event in events { continuation.yield(event) }
+                continuation.finish(throwing: failure)
+            }
+        )
     }
 
     func probe(_ backend: AgentBackend) async -> Bool { true }
+}
+
+/// Builds the `.turnEnd` frame a bridge sends when a turn dies (contract §3.1d).
+private func failedTurnEnd(
+    seq: Int = 99,
+    turnID: String? = "t-1",
+    failedAtMs: Int? = 480_000,
+    toolCallsCompleted: Int? = 3
+) -> SequencedEvent {
+    SequencedEvent(
+        seq: seq,
+        event: .turnEnd(
+            TurnEnd(
+                turnID: turnID,
+                outcome: .failed,
+                failedAtMs: failedAtMs,
+                toolCallsCompleted: toolCallsCompleted,
+                errorCode: "backend_error"
+            )
+        )
+    )
+}
+
+private func completedTurnEnd(seq: Int = 99, turnID: String? = "t-1") -> SequencedEvent {
+    SequencedEvent(seq: seq, event: .turnEnd(TurnEnd(turnID: turnID, outcome: .completed)))
 }
 
 @Suite("ChatService")
@@ -93,7 +136,7 @@ struct ChatServiceTests {
         let session = Self.makeSession(backendID: backend.id)
         let repository = Self.makeRepository(seeding: session)
         let service = Self.makeService(
-            transport: ScriptedTransport(events: [.chunk("Hel"), .chunk("lo"), .completed]),
+            transport: ScriptedTransport(text: ["Hel", "lo"]),
             repository: repository
         )
 
@@ -117,7 +160,7 @@ struct ChatServiceTests {
         let session = Self.makeSession(backendID: backend.id)
         let repository = Self.makeRepository(seeding: session)
         let service = Self.makeService(
-            transport: ScriptedTransport(events: [.chunk("saved"), .completed]),
+            transport: ScriptedTransport(text: ["saved"]),
             repository: repository
         )
 
@@ -136,7 +179,7 @@ struct ChatServiceTests {
         let repository = Self.makeRepository(seeding: session)
         let service = Self.makeService(
             transport: ScriptedTransport(
-                events: [.chunk("par")], failure: LocalisError.connectionLost
+                text: ["par"], failure: LocalisError.connectionLost
             ),
             repository: repository
         )
@@ -164,7 +207,7 @@ struct ChatServiceTests {
         let repository = Self.makeRepository(seeding: session)
         let service = Self.makeService(
             transport: ScriptedTransport(
-                events: [.chunk("par")], failure: LocalisError.tokenRevoked
+                text: ["par"], failure: LocalisError.tokenRevoked
             ),
             repository: repository
         )
@@ -185,7 +228,7 @@ struct ChatServiceTests {
         let session = Self.makeSession(backendID: backend.id)
         let repository = Self.makeRepository(seeding: session)
         let service = Self.makeService(
-            transport: ScriptedTransport(events: [.chunk("done")]),
+            transport: ScriptedTransport(text: ["done"]),
             repository: repository
         )
 
@@ -233,7 +276,7 @@ struct ChatServiceHostScopeTests {
         let original = Self.session(on: Self.hostB)
         let repository = InMemorySessionRepository(sessions: [original])
         let service = ChatService(
-            transport: ScriptedTransport(events: [.chunk("hi"), .completed]),
+            transport: ScriptedTransport(text: ["hi"]),
             repository: repository,
             now: { Self.t0 }
         )
@@ -258,12 +301,12 @@ struct ChatServiceHostScopeTests {
         let repository = InMemorySessionRepository(sessions: [onA, onB])
 
         let serviceA = ChatService(
-            transport: ScriptedTransport(events: [.chunk("from A"), .completed]),
+            transport: ScriptedTransport(text: ["from A"]),
             repository: repository,
             now: { Self.t0 }
         )
         let serviceB = ChatService(
-            transport: ScriptedTransport(events: [.chunk("from B"), .completed]),
+            transport: ScriptedTransport(text: ["from B"]),
             repository: repository,
             now: { Self.t0 }
         )
@@ -321,7 +364,7 @@ struct ChatServiceSettlementTests {
         let repository = InMemorySessionRepository(sessions: [session])
         let service = ChatService(
             transport: ScriptedTransport(
-                events: [.chunk("par")], failure: LocalisError.connectionLost
+                text: ["par"], failure: LocalisError.connectionLost
             ),
             repository: repository,
             now: { Self.t0 }
@@ -356,7 +399,7 @@ struct ChatServiceSettlementTests {
         let ok = Self.makeSession()
         let okRepository = InMemorySessionRepository(sessions: [ok])
         let succeeding = ChatService(
-            transport: ScriptedTransport(events: [.chunk("hi"), .completed]),
+            transport: ScriptedTransport(text: ["hi"]),
             repository: okRepository,
             now: { Self.t0 }
         )
@@ -376,7 +419,7 @@ struct ChatServiceSettlementTests {
         let repository = InMemorySessionRepository(sessions: [session])
         let service = ChatService(
             transport: ScriptedTransport(
-                events: [.chunk("half an "), .chunk("answer")],
+                text: ["half an ", "answer"],
                 failure: LocalisError.connectionLost
             ),
             repository: repository,
@@ -420,15 +463,29 @@ struct ChatServiceFailureReasonTests {
 
     @Test("a backend-reported failure carries its reason onto the session")
     func backendFailureKeepsItsReason() async throws {
-        // `TransportEvent.failed` carries a `LocalisError`. Matching it as a
-        // bare `case .failed:` compiles and silently drops the reason, leaving
-        // the user with "Error" and no way to tell a revoked token from a
-        // dropped Wi-Fi connection.
+        // The bridge reports a failure as `.turnEnd(outcome: .failed)` with an
+        // `errorCode`. Ignoring the code leaves the user with "Error" and no
+        // way to tell a revoked token from a dropped Wi-Fi connection — one
+        // needs re-pairing, the other needs nothing but a retry.
         let session = Self.makeSession()
         let repository = InMemorySessionRepository(sessions: [session])
         let service = ChatService(
             transport: ScriptedTransport(
-                events: [.chunk("par"), .failed(.tokenRevoked)]
+                events: [
+                    SequencedEvent(seq: 0, event: .delta("par")),
+                    SequencedEvent(
+                        seq: 1,
+                        event: .turnEnd(
+                            TurnEnd(
+                                turnID: "t-1",
+                                outcome: .failed,
+                                failedAtMs: 480_000,
+                                toolCallsCompleted: 3,
+                                errorCode: "token_revoked"
+                            )
+                        )
+                    ),
+                ]
             ),
             repository: repository,
             now: { Self.t0 }
@@ -456,7 +513,7 @@ struct ChatServiceFailureReasonTests {
         let repository = InMemorySessionRepository(sessions: [session])
         let service = ChatService(
             transport: ScriptedTransport(
-                events: [.chunk("par")], failure: LocalisError.connectionLost
+                text: ["par"], failure: LocalisError.connectionLost
             ),
             repository: repository,
             now: { Self.t0 }
@@ -505,7 +562,7 @@ struct ChatServiceFailureReasonTests {
         let session = Self.makeSession()
         let repository = InMemorySessionRepository(sessions: [session])
         let service = ChatService(
-            transport: ScriptedTransport(events: [.chunk("hi"), .completed]),
+            transport: ScriptedTransport(text: ["hi"]),
             repository: repository,
             now: { Self.t0 }
         )
@@ -560,7 +617,7 @@ struct ChatServiceDetachmentTests {
         let repository = InMemorySessionRepository(sessions: [session])
         let service = ChatService(
             transport: ScriptedTransport(
-                events: [.chunk("par")], failure: LocalisError.connectionLost
+                text: ["par"], failure: LocalisError.connectionLost
             ),
             repository: repository,
             now: { Self.t0 }
@@ -659,5 +716,260 @@ struct ChatServiceDetachmentTests {
         )
 
         #expect(status == .error(.connectionLost))
+    }
+}
+
+/// The two end-to-end gaps the nine-case seam exists to close.
+///
+/// Every layer had already done its part — the bridge sends the detail, the
+/// mapper parses it, the store persists it, the UI renders it. The three-case
+/// seam in between was the only thing discarding it, so the whole chain read as
+/// finished while the user still saw a bare "Error".
+@Suite("ChatService closes the failure-detail and detach gaps")
+struct ChatServiceTurnEndTests {
+    private static let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+    private static let hostID = HostID(
+        rawValue: UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
+    )
+    private static let backend = AgentBackend(
+        id: "claude", displayName: "Claude", capabilities: [.streaming]
+    )
+
+    private static func makeSession() -> Session {
+        Session(
+            id: UUID(), hostID: hostID, backendID: "claude",
+            title: "Test", createdAt: t0, updatedAt: t0
+        )
+    }
+
+    private static func run(
+        _ transport: ScriptedTransport
+    ) async throws -> (session: Session, stored: Session) {
+        let session = makeSession()
+        let repository = InMemorySessionRepository(sessions: [session])
+        let service = ChatService(
+            transport: transport, repository: repository, now: { t0 }
+        )
+        var latest: Session?
+        for try await s in try await service.send(
+            prompt: "hi", in: session, to: backend
+        ) { latest = s }
+        let stored = try #require(try await repository.session(id: session.id))
+        return (try #require(latest), stored)
+    }
+
+    @Test("a failed turn carries how far it got onto the message")
+    func failureDetailReachesTheMessage() async throws {
+        // Gap 1. The user is owed "failed 8 minutes in, after 3 tool calls"
+        // rather than "Error" — contract §3.1(d) makes both fields required
+        // precisely so a failure is actionable.
+        let (final, stored) = try await Self.run(
+            ScriptedTransport(events: [
+                SequencedEvent(seq: 0, event: .delta("par")),
+                failedTurnEnd(seq: 1, failedAtMs: 480_000, toolCallsCompleted: 3),
+            ])
+        )
+
+        let message = try #require(final.messages.last)
+        #expect(message.status == .failed)
+        let failure = try #require(message.failure)
+        #expect(failure.failedAtMs == 480_000)
+        #expect(failure.toolCallsCompleted == 3)
+        // It has to survive the save, because force-quitting before seeing the
+        // failure is the exact case background resume exists for.
+        #expect(stored.messages.last?.failure == failure)
+        // And the partial text is still there — detail is added, nothing lost.
+        #expect(message.text == "par")
+    }
+
+    @Test("a failure the bridge under-reports is still a failure")
+    func failureWithoutDetailIsStillFailed() async throws {
+        // The store's `TurnReconciliation` degrades a detail-less failure to
+        // `.settled`, which silently swallows it — its own author flagged this
+        // as a design gap. This layer must not reproduce it: we saw the
+        // `.turnEnd(outcome: .failed)` frame directly, so the failure is a
+        // fact regardless of whether the numbers came with it.
+        //
+        // What is *not* done: inventing `TurnFailure(0, 0)`. "Failed 0 minutes
+        // in, after 0 tool calls" is a fabricated claim. The message is
+        // `.failed` with no detail, and the UI already drops the detail line
+        // when it is absent rather than rendering zeros.
+        let (final, _) = try await Self.run(
+            ScriptedTransport(events: [
+                SequencedEvent(seq: 0, event: .delta("par")),
+                failedTurnEnd(seq: 1, failedAtMs: nil, toolCallsCompleted: nil),
+            ])
+        )
+
+        let message = try #require(final.messages.last)
+        #expect(message.status == .failed)
+        #expect(message.failure == nil)
+        #expect(message.isRetryable)
+    }
+
+    @Test("a partially-reported failure is not half-invented")
+    func partialDetailIsNotFabricated() async throws {
+        // One field present, one missing. Filling the gap with `0` would state
+        // something the bridge never said, so the detail is dropped whole.
+        let (final, _) = try await Self.run(
+            ScriptedTransport(events: [
+                failedTurnEnd(seq: 0, failedAtMs: 480_000, toolCallsCompleted: nil),
+            ])
+        )
+
+        let message = try #require(final.messages.last)
+        #expect(message.status == .failed)
+        #expect(message.failure == nil)
+    }
+
+    @Test("a dropped connection on a resumable turn is detached, never retryable")
+    func detachedNeedsACursor() async throws {
+        // Gap 2. The host is still generating, so offering a retry starts a
+        // second job on the user's own machine while the first burns tokens.
+        // The cursor is what proves the turn can be picked up again.
+        let (final, stored) = try await Self.run(
+            ScriptedTransport(
+                events: [SequencedEvent(seq: 7, event: .delta("half"))],
+                failure: LocalisError.connectionLost,
+                turnID: "t-1"
+            )
+        )
+
+        let message = try #require(final.messages.last)
+        #expect(message.status == .detached)
+        #expect(!message.isRetryable)
+        #expect(message.text == "half")
+        // Not an error: the turn is fine, the link is what broke.
+        #expect(final.status == .disconnected)
+        #expect(stored.messages.last?.status == .detached)
+    }
+
+    @Test("a dropped connection with no turn id is interrupted and retryable")
+    func noTurnIDMeansInterrupted() async throws {
+        // A bridge older than the resume contract sends no id, so there is
+        // nothing to resume from — the content is genuinely gone and a retry
+        // is the right offer.
+        let (final, _) = try await Self.run(
+            ScriptedTransport(
+                events: [SequencedEvent(seq: 0, event: .delta("half"))],
+                failure: LocalisError.connectionLost,
+                turnID: nil
+            )
+        )
+
+        let message = try #require(final.messages.last)
+        #expect(message.status == .interrupted)
+        #expect(message.isRetryable)
+        #expect(message.text == "half")
+    }
+
+    @Test("a turn id in the header alone is enough to detach")
+    func detachBeforeAnyFrameArrives() async throws {
+        // The case the header placement exists for: the connection dies before
+        // a single frame lands. Were the id carried in the first event, this
+        // turn would be indistinguishable from one that never started — and
+        // the Mac would keep generating with nothing on screen able to say so.
+        let (final, _) = try await Self.run(
+            ScriptedTransport(
+                events: [], failure: LocalisError.connectionLost, turnID: "t-1"
+            )
+        )
+
+        #expect(try #require(final.messages.last).status == .detached)
+    }
+
+    @Test("an unretryable error is failed even with a cursor")
+    func unretryableBeatsTheCursor() async throws {
+        // A revoked token produces the same broken stream as a dropped
+        // connection, but resuming replays the same refusal. `isRetryable`
+        // is the gate, and no cursor overrides it.
+        let (final, _) = try await Self.run(
+            ScriptedTransport(
+                events: [], failure: LocalisError.tokenRevoked, turnID: "t-1"
+            )
+        )
+
+        #expect(try #require(final.messages.last).status == .failed)
+    }
+
+    @Test("a replayed frame does not append its text twice")
+    func replayedFramesAreDeduped() async throws {
+        // Amendment C §3.3 / SC-003: "no missing text, no duplicated text".
+        // The bridge may resend frames around the replay boundary, and `seq`
+        // is what makes the duplicate recognisable.
+        let (final, _) = try await Self.run(
+            ScriptedTransport(
+                events: [
+                    SequencedEvent(seq: 0, event: .delta("Hel")),
+                    SequencedEvent(seq: 1, event: .delta("lo")),
+                    // The bridge replays seq 1 — already accepted.
+                    SequencedEvent(seq: 1, event: .delta("lo")),
+                    completedTurnEnd(seq: 2),
+                ],
+                turnID: "t-1"
+            )
+        )
+
+        #expect(try #require(final.messages.last).text == "Hello")
+    }
+
+    @Test("events with no seq are all kept — a host without resume is not deduped")
+    func unsequencedEventsAreNotDeduped() async throws {
+        // `seq` is optional, and absent means "this host cannot resume", not
+        // "sequence zero". Treating nil as a number would drop repeated text
+        // from a perfectly healthy stream — the same word twice is ordinary.
+        let (final, _) = try await Self.run(
+            ScriptedTransport(events: [
+                SequencedEvent(seq: nil, event: .delta("go ")),
+                SequencedEvent(seq: nil, event: .delta("go ")),
+                SequencedEvent(seq: nil, event: .delta("go")),
+            ])
+        )
+
+        #expect(try #require(final.messages.last).text == "go go go")
+    }
+
+    @Test("a completed turnEnd settles the message and clears the session error")
+    func completedTurnEndSettles() async throws {
+        let (final, _) = try await Self.run(
+            ScriptedTransport(events: [
+                SequencedEvent(seq: 0, event: .delta("hi")),
+                completedTurnEnd(seq: 1),
+            ])
+        )
+
+        #expect(try #require(final.messages.last).status == .complete)
+        #expect(final.status == .idle)
+        #expect(final.canSend)
+    }
+
+    @Test("the five unconsumed event kinds are ignored, not fatal")
+    func unconsumedEventsDoNotBreakTheTurn() async throws {
+        // Tool calls, approvals, activity phrases, telemetry and usage all have
+        // real uses, and wiring them up is its own piece of work. What must not
+        // happen meanwhile is a turn breaking because one arrived — the same
+        // rule the mapper follows for frames it cannot parse.
+        let (final, _) = try await Self.run(
+            ScriptedTransport(events: [
+                SequencedEvent(seq: 0, event: .sessionStatus("Compacting context…")),
+                SequencedEvent(
+                    seq: 1,
+                    event: .toolCall(ToolCall(callID: "c-1", phase: .start, tool: "read"))
+                ),
+                SequencedEvent(seq: 2, event: .telemetry(["tps": .number(42)])),
+                SequencedEvent(
+                    seq: 3,
+                    event: .usage(TokenUsage(promptTokens: 10, completionTokens: 5, totalTokens: 15))
+                ),
+                SequencedEvent(seq: 4, event: .delta("hi")),
+                SequencedEvent(seq: 5, event: .finished(reason: "stop")),
+                completedTurnEnd(seq: 6),
+                SequencedEvent(seq: 7, event: .done),
+            ])
+        )
+
+        let message = try #require(final.messages.last)
+        #expect(message.text == "hi")
+        #expect(message.status == .complete)
     }
 }

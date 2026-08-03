@@ -60,52 +60,86 @@ public actor ChatService {
         let withPlaceholder = withUser.appending(placeholder, at: now())
         try await repository.save(withPlaceholder)
 
-        let request = TransportRequest(
-            backend: backend,
-            prompt: trimmed,
-            history: session.messages
+        let request = TurnRequest(
+            backendID: backend.id,
+            sessionID: session.id,
+            // The bridge wants the conversation ending with what to answer, not
+            // a history and a prompt kept apart. `withUser` already has the new
+            // turn appended, so this is that list exactly.
+            messages: withUser.messages
         )
-        let events = try await transport.send(request)
+        let turn = try await transport.send(request)
 
         return AsyncThrowingStream { continuation in
             Task { [repository, now] in
                 var current = withPlaceholder
                 var assistant = placeholder
-                // The resume point, advanced as sequenced frames arrive.
-                //
-                // Always `nil` today: `TransportEvent` is `.chunk` / `.completed`
-                // / `.failed`, and none of the three carries a turn id or a
-                // `seq`, so there is nothing to build a cursor out of. That is
-                // why `.detached` never appears yet — not an unimplemented
-                // branch, but a value the current seam cannot express.
-                //
-                // It is threaded through anyway so that the day the transport
-                // yields `SequencedEvent`, assigning here is the whole change:
-                // the settlement rule below already reads it, and `.detached`
-                // starts appearing without a second decision being made.
-                let cursor: TurnCursor? = nil
+                // The resume point. Seeded from the turn id, which arrives in
+                // the response header *before* any frame — which is what makes
+                // the worst case decidable: a connection that dies before the
+                // first event is still a turn the Mac is generating, and
+                // without the id it would be indistinguishable from one that
+                // never started.
+                var cursor = turn.turnID.map { TurnCursor(turnID: $0) }
                 continuation.yield(current)
 
                 do {
-                    for try await event in events {
-                        switch event {
-                        case .chunk(let text):
+                    for try await sequenced in turn.events {
+                        // Dedup before anything else. On resume the bridge may
+                        // replay frames around the boundary, and appending a
+                        // replayed delta shows the user duplicated words
+                        // (SC-003: no missing text, no duplicated text).
+                        //
+                        // A frame with no `seq` is always kept: absent means
+                        // "this host cannot resume", not "sequence zero", and
+                        // repeating the same word twice is ordinary in a
+                        // healthy stream.
+                        //
+                        // `shouldAccept`, not `accepts`: a `SequencedEvent`
+                        // carries no turn id, and one `TurnStream` is one
+                        // turn's frames by construction, so there is no second
+                        // turn here to confuse this one with. Passing the
+                        // cursor's own id in as the incoming one would look
+                        // like the stronger check while comparing a value to
+                        // itself — the shape that reads as safe and is not.
+                        if let seq = sequenced.seq, let cursor {
+                            guard cursor.shouldAccept(seq: seq) else { continue }
+                        }
+                        if let seq = sequenced.seq {
+                            cursor = cursor?.advanced(to: seq)
+                        }
+
+                        switch sequenced.event {
+                        case .delta(let text):
                             assistant = assistant.appending(text)
-                        case .completed:
-                            assistant = assistant.withStatus(.complete)
-                        case .failed(let reason):
-                            // Bind the reason. A bare `case .failed:` compiles
-                            // and silently discards it, leaving the user with
-                            // "Error" and no way to tell a revoked token from
-                            // a dropped connection.
-                            assistant = assistant.withStatus(.failed)
+
+                        case .turnEnd(let end):
+                            guard let settled = Self.settle(assistant, on: end, at: now()) else {
+                                // A non-terminal outcome this build cannot name
+                                // (`.unknown`). Letting the stream run on is
+                                // right: the frames that follow decide, and
+                                // guessing `.complete` here would report an
+                                // unfinished turn as answered.
+                                continue
+                            }
+                            assistant = settled
                             current = current
                                 .replacing(assistant, at: now())
-                                .withStatus(.error(reason), at: now())
+                                .withStatus(Self.sessionStatus(for: end), at: now())
                             try? await repository.save(current)
                             continuation.yield(current)
                             continuation.finish()
                             return
+
+                        // Tool calls, approvals, activity phrases, telemetry and
+                        // usage are all real features with their own work to do;
+                        // wiring them up is a separate piece. What matters here
+                        // is that an unconsumed frame must not break the turn —
+                        // the same rule the mapper follows for frames it cannot
+                        // parse at all.
+                        case .toolCall, .approvalRequired, .sessionStatus,
+                             .telemetry, .usage, .finished, .done:
+                            continue
                         }
                         current = current.replacing(assistant, at: now())
                         try await repository.save(current)
@@ -204,5 +238,63 @@ public actor ChatService {
     /// first generates is the precise harm Amendment C §1.5 exists to prevent.
     static func sessionStatus(for settled: MessageStatus, reason: LocalisError) -> SessionStatus {
         settled.isInFlight ? .disconnected : .error(reason)
+    }
+
+    /// Applies a `.turnEnd` frame to the assistant message.
+    ///
+    /// Returns `nil` when the outcome is one this build cannot name, so the
+    /// caller keeps reading rather than guessing — reporting an unfinished turn
+    /// as answered is worse than waiting for the frames that decide.
+    ///
+    /// The failure branch is the one that closes the gap this seam existed to
+    /// create: `TurnFailure` reaches the *message*, which is what survives a
+    /// relaunch. The whole chain below this point was already built for it —
+    /// the store persists it, the UI renders "failed 8 minutes in, after 3 tool
+    /// calls" — and the old three-case seam was the only thing dropping it.
+    private static func settle(_ message: Message, on end: TurnEnd, at date: Date) -> Message? {
+        switch end.outcome {
+        case .completed:
+            return message.withStatus(.complete)
+        case .cancelled:
+            // The user asked for this, so it is not a failure to report back
+            // to them. Nothing is still running, so a retry is safe.
+            return message.withStatus(.interrupted)
+        case .failed:
+            // A failure is a fact the moment the bridge says `outcome: failed`,
+            // whether or not the numbers came with it. The store's
+            // reconciliation degrades a detail-less failure to `.settled` —
+            // which loses both the failure and the retry — but that path only
+            // sees two persisted columns. Here the frame itself was observed,
+            // so there is nothing to infer.
+            //
+            // What is *not* done: filling a missing field with `0`. "Failed 0
+            // minutes in, after 0 tool calls" is a fabricated claim, and the
+            // UI already drops the detail line when it is absent rather than
+            // rendering zeros. Both fields or neither — a half-invented record
+            // is the one shape that reads as true and is not.
+            guard
+                let failedAtMs = end.failedAtMs,
+                let toolCallsCompleted = end.toolCallsCompleted
+            else {
+                return message.withStatus(.failed)
+            }
+            return message.failed(
+                TurnFailure(failedAtMs: failedAtMs, toolCallsCompleted: toolCallsCompleted)
+            )
+        case .unknown:
+            return nil
+        }
+    }
+
+    /// What the conversation reads as once the bridge ended the turn.
+    private static func sessionStatus(for end: TurnEnd) -> SessionStatus {
+        switch end.outcome {
+        case .completed, .cancelled, .unknown:
+            // Clears any error a previous turn left behind, so one bad turn
+            // does not mark the conversation broken for good (FR-053).
+            return .idle
+        case .failed:
+            return .error(LocalisError(wireCode: end.errorCode))
+        }
     }
 }

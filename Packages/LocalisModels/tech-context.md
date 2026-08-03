@@ -158,6 +158,28 @@ are not among them.
 session: a conversation that ended in failure should still read as failed after
 a relaunch, rather than silently coming back as idle.
 
+### The wire-code mapping lives here, not per layer
+
+`LocalisError(wireCode:)` is the one translation from contract §6's `error.code`
+into this vocabulary. It sits next to the cases for the same reason the cases sit
+together: three layers each writing their own switch is three implementations
+that can each be wrong differently, and the one that drifts stays invisible until
+a user hits exactly that code on exactly that path.
+
+Two choices about codes this build does not recognise, both deliberate:
+
+- **The initialiser is not failable.** Returning `nil` invites `?? nothing
+  happened` at the call site, which reports a failed turn as fine. A code we
+  cannot name is still a failure.
+- **The fallback is `malformedResponse`, which is retryable.** "We don't know
+  what went wrong" and "we know a retry cannot help" are different claims, and
+  they are not equally costly to get wrong: defaulting to the second takes the
+  retry away from a user whose next attempt might well have worked.
+
+The code is never used as display text. An unrecognised value may be the bridge's
+own `error.message` passed in by mistake, and that can carry absolute paths
+(constitution I / FR-025); `userMessage` is derived from the case, so it cannot.
+
 ## Resume cursor
 
 `TurnCursor` is `(turnID, lastSeq)`. `lastSeq` is `Int?` rather than defaulting
