@@ -5,7 +5,10 @@ import Foundation
 /// Every layer maps its own failures into this enum at its boundary so the UI
 /// has exactly one error vocabulary to render. `userMessage` is the only text
 /// intended for display — it never contains endpoints, tokens, or raw payloads.
-public enum LocalisError: Error, Equatable, Sendable {
+/// `Codable` because `SessionStatus.error` is persisted with the session: a
+/// conversation that ended in a failure should still read as failed after a
+/// relaunch, rather than silently coming back as idle.
+public enum LocalisError: Error, Codable, Hashable, Sendable {
     /// The agent endpoint was unreachable (offline, wrong host, refused).
     case unreachable
     /// The connection dropped mid-stream.

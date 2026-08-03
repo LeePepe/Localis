@@ -51,6 +51,7 @@ struct SessionTests {
     private static func makeSession(messages: [Message] = []) -> Session {
         Session(
             id: UUID(),
+            hostID: HostID(),
             backendID: "test-backend",
             title: "Test",
             messages: messages,
