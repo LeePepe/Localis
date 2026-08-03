@@ -83,6 +83,44 @@ struct MessageStateTests {
         }
     }
 
+    @Test("retry and cancel are never offered together")
+    func retryAndCancelAreMutuallyExclusive() {
+        // This guards the premise the two quantified tests above share.
+        //
+        // `actions(for:)` asks two questions independently — `isRetryable` for
+        // retry, `isInFlight` for cancel — and the set is only ever a sensible
+        // pair because those two predicates happen to be disjoint today. Nothing
+        // states that. If a status is ever both, this layer would draw "Retry"
+        // and "Stop" on the same turn, and `inFlightNeverRetryable` would fail
+        // in a way that reads as a UI bug rather than as the domain having
+        // changed shape underneath it.
+        //
+        // Asserted through the projection rather than on the predicates, because
+        // it is the *pair of controls* that must not coexist — that is the harm,
+        // and it survives a rename of either question.
+        for status in MessageStatus.allCases {
+            let actions = MessageState.make(from: Self.message(status)).actions
+            #expect(
+                !(actions.contains(.retry) && actions.contains(.cancel)),
+                "\(status) offered both retry and cancel"
+            )
+        }
+    }
+
+    @Test("every status offers at least one action or none, never an unhandled one")
+    func actionsAreOnlyEverDerivedFromTheTwoQuestions() {
+        // The set is closed: it holds only what `isRetryable` and `isInFlight`
+        // put there. A third control added to `MessageAction` without a rule to
+        // grant it would sit unreachable — visible in the enum, never rendered —
+        // which is a quieter failure than a compile error.
+        for action in MessageAction.allCases {
+            let granted = MessageStatus.allCases.contains { status in
+                MessageState.make(from: Self.message(status)).actions.contains(action)
+            }
+            #expect(granted, "\(action) is never granted by any status")
+        }
+    }
+
     // MARK: - Failure detail
 
     @Test("a failure with detail says how far it got")

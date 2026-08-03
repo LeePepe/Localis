@@ -65,6 +65,25 @@ Three layers only help if they agree by deriving from one rule rather than by
 coincidence — so `actions(for:)` delegates rather than pattern-matching the enum
 a fourth time.
 
+### What the quantified tests rest on
+
+`actions(for:)` asks two questions independently — `isRetryable` for retry,
+`isInFlight` for cancel — and the result is only ever a sensible pair of controls
+because those predicates are disjoint. Nothing in the domain states that, so a
+test here does: no status may offer retry and cancel together. Without it, a
+status that became both would draw "Retry" and "Stop" on the same turn, and the
+in-flight test would fail in a way that reads as a UI bug rather than as the
+domain having changed shape underneath.
+
+It is asserted through the projection, not on the predicates, because the harm is
+the *pair of controls coexisting* — that survives a rename of either question.
+A companion test holds the other direction: every `MessageAction` is granted by
+some status, so a control added to the enum without a rule to grant it cannot sit
+unreachable — visible in the type, never rendered.
+
+The general shape: a quantified test's blind spot is its own filter condition.
+`for … where isInFlight` cannot see a status the filter silently drops.
+
 ## Failure detail is never fabricated
 
 `FailureDetail` exists only when the host reported both `failed_at_ms` and
