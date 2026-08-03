@@ -495,6 +495,64 @@ struct SwiftDataSessionRepositoryTests {
         #expect(outcome.allowsRetry)
     }
 
+    @Test("failure detail reads back on the message, not only through reconcile")
+    func failureDetailIsOnTheRestoredMessage() async throws {
+        let store = try SessionStoreContainer.inMemory()
+        let message = Self.makeMessage(text: "died here", status: .failed)
+        let session = Self.makeSession(messages: [message])
+
+        let writer = SwiftDataSessionRepository(container: store)
+        try await writer.create(session)
+        try await writer.recordTurn(
+            messageID: message.id,
+            state: .failed,
+            cursor: nil,
+            failure: TurnFailure(failedAtMs: 480_000, toolCallsCompleted: 3)
+        )
+
+        let afterRelaunch = SwiftDataSessionRepository(container: store)
+        let loaded = try #require(try await afterRelaunch.session(id: session.id))
+        let restored = try #require(loaded.messages.first)
+
+        // The transcript is what the UI renders. Detail reachable only through
+        // `reconcile` would still leave the message itself saying "Error".
+        #expect(restored.failure == TurnFailure(failedAtMs: 480_000, toolCallsCompleted: 3))
+        #expect(restored.status == .failed)
+    }
+
+    @Test("a message that is not failed never carries failure detail")
+    func nonFailedMessageDropsStaleDetail() async throws {
+        let store = try SessionStoreContainer.inMemory()
+        let message = Self.makeMessage(text: "first try", status: .failed)
+        let session = Self.makeSession(messages: [message])
+        let repository = SwiftDataSessionRepository(container: store)
+        try await repository.create(session)
+        try await repository.recordTurn(
+            messageID: message.id,
+            state: .failed,
+            cursor: nil,
+            failure: TurnFailure(failedAtMs: 480_000, toolCallsCompleted: 3)
+        )
+
+        // The retry succeeds and the same message completes.
+        let retried = try #require(try await repository.session(id: session.id))
+        try await repository.save(
+            Session(
+                id: retried.id, hostID: retried.hostID, backendID: retried.backendID,
+                title: retried.title,
+                messages: retried.messages.map { $0.withStatus(.complete) },
+                createdAt: retried.createdAt, updatedAt: retried.updatedAt
+            )
+        )
+
+        let loaded = try #require(try await repository.session(id: session.id))
+        let restored = try #require(loaded.messages.first)
+        // "failed 8 minutes in" hanging off a finished answer reads as a fresh
+        // failure. Storage must not resurrect what `withStatus` dropped.
+        #expect(restored.status == .complete)
+        #expect(restored.failure == nil)
+    }
+
     @Test("truncated output is stored as interrupted, never as complete")
     func truncationIsNeverComplete() async throws {
         let store = try SessionStoreContainer.inMemory()
@@ -611,12 +669,33 @@ struct SwiftDataSessionRepositoryTests {
 
     // MARK: - Backends
 
+    @Test("an unrecognised capability round-trips instead of dropping the backend")
+    func unknownCapabilitySurvivesStorage() async throws {
+        let store = try SessionStoreContainer.inMemory()
+        let repository = SwiftDataSessionRepository(container: store)
+        // A capability this build has no name for — the bridge added one without
+        // an iOS release (contract §2, constitution IV).
+        let future = Capability(rawValue: "vision")
+        let backend = AgentBackend(
+            id: "claude", displayName: "Claude", capabilities: [.streaming, future]
+        )
+
+        try await repository.save(backend, on: Self.hostA)
+
+        let afterRelaunch = SwiftDataSessionRepository(container: store)
+        let loaded = try #require(try await afterRelaunch.backends(ofHost: Self.hostA).first)
+        // Kept verbatim, and it did not take the backend down with it — losing
+        // the agent from the picker over one extra word is what §2 forbids.
+        #expect(loaded.capabilities == [.streaming, future])
+        #expect(future.isKnown == false)
+    }
+
     @Test("backends are stored per host and never collide across hosts")
     func backendsAreHostScoped() async throws {
         let store = try SessionStoreContainer.inMemory()
         let repository = SwiftDataSessionRepository(container: store)
-        let onA = AgentBackend(id: "claude", displayName: "Claude on Studio", capabilities: ["streaming"])
-        let onB = AgentBackend(id: "claude", displayName: "Claude on MacBook", capabilities: ["streaming"])
+        let onA = AgentBackend(id: "claude", displayName: "Claude on Studio", capabilities: [.streaming])
+        let onB = AgentBackend(id: "claude", displayName: "Claude on MacBook", capabilities: [.streaming])
 
         try await repository.save(onA, on: Self.hostA)
         try await repository.save(onB, on: Self.hostB)

@@ -34,7 +34,7 @@ struct InMemorySessionRepositoryTests {
         AgentBackend(
             id: name.lowercased(),
             displayName: name,
-            capabilities: ["streaming"]
+            capabilities: [.streaming]
         )
     }
 

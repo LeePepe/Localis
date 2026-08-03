@@ -19,7 +19,8 @@ enum StoredMapping {
             role: MessageRole(rawValue: stored.roleRaw) ?? .assistant,
             text: stored.text,
             createdAt: stored.createdAt,
-            status: MessageStatus(rawValue: stored.statusRaw) ?? .complete
+            status: MessageStatus(rawValue: stored.statusRaw) ?? .complete,
+            failure: failure(from: stored)
         )
     }
 
@@ -105,8 +106,19 @@ enum StoredMapping {
         AgentBackend(
             id: stored.backendID,
             displayName: stored.displayName,
-            capabilities: Set(stored.capabilities)
+            capabilities: Set(stored.capabilities.map(Capability.init(rawValue:)))
         )
+    }
+
+    /// Capabilities as sorted wire strings, ready for the `capabilities` column.
+    ///
+    /// Stored as raw strings, not as encoded `Capability` values: the column
+    /// holds exactly what `/v1/models` sent, so a capability this build has no
+    /// name for round-trips untouched (contract §2 — unknown values are ignored,
+    /// never a reason to drop the backend). Sorted so a row rewritten with the
+    /// same set compares equal instead of churning on `Set` ordering.
+    static func capabilityStrings(_ capabilities: Set<Capability>) -> [String] {
+        capabilities.map(\.rawValue).sorted()
     }
 
     /// The resume cursor for a message, if it has one.
@@ -121,6 +133,15 @@ enum StoredMapping {
     }
 
     /// Failure detail for a message, if the turn failed and the bridge sent it.
+    ///
+    /// Feeds both the restored `Message` and `reconcile(messageID:)`. The
+    /// message matters most: the transcript is what the UI renders, so detail
+    /// reachable only through reconciliation would still leave the message
+    /// itself saying "Error".
+    ///
+    /// `Message.init` discards the detail unless the status is `.failed`, so a
+    /// row whose status moved on cannot carry stale progress back into the
+    /// domain — this function does not need to re-check that.
     ///
     /// Both halves are required: a `failed_at_ms` with no tool-call count is a
     /// partially-decoded frame, and rendering "failed 8 minutes in, after 0 tool
@@ -140,13 +161,15 @@ enum StoredMapping {
     // MARK: - Writing
 
     static func makeStored(_ message: Message) -> StoredMessage {
-        StoredMessage(
+        let stored = StoredMessage(
             id: message.id,
             roleRaw: message.role.rawValue,
             text: message.text,
             createdAt: message.createdAt,
             statusRaw: message.status.rawValue
         )
+        applyFailure(message.failure, to: stored)
+        return stored
     }
 
     static func makeStored(_ session: Session, hostID: HostID?) -> StoredSession {
@@ -181,6 +204,19 @@ enum StoredMapping {
         stored.text = message.text
         stored.statusRaw = message.status.rawValue
         stored.roleRaw = message.role.rawValue
+        applyFailure(message.failure, to: stored)
+    }
+
+    /// Mirrors a message's failure detail onto its row, clearing it when absent.
+    ///
+    /// The clear is the load-bearing half. `Message` drops the detail the moment
+    /// the status leaves `.failed`, so a retry that succeeds arrives here with
+    /// `failure == nil`; leaving the old columns in place would resurrect
+    /// "failed 8 minutes in" on a finished answer, where it reads as a fresh
+    /// failure. Storage must not hold a fact the domain has already retracted.
+    private static func applyFailure(_ failure: TurnFailure?, to stored: StoredMessage) {
+        stored.failedAtMs = failure?.failedAtMs
+        stored.toolCallsCompleted = failure?.toolCallsCompleted
     }
 
     /// Applies the mutable fields of a session onto its stored row.

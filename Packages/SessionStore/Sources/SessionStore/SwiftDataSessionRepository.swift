@@ -145,7 +145,7 @@ public actor SwiftDataSessionRepository {
         let descriptor = FetchDescriptor<StoredBackend>(
             predicate: #Predicate { $0.hostID == raw && $0.backendID == backendID }
         )
-        let capabilities = backend.capabilities.sorted()
+        let capabilities = StoredMapping.capabilityStrings(backend.capabilities)
         if let existing = try modelContext.fetch(descriptor).first {
             existing.displayName = backend.displayName
             existing.capabilities = capabilities
@@ -275,15 +275,15 @@ public actor SwiftDataSessionRepository {
 
     /// Advances a turn's cursor, dropping replayed frames.
     ///
-    /// Returns whether the frame was new. The cursor itself decides — dedup
-    /// lives in one place so a resume boundary can't double-write text.
+    /// Returns whether the frame was new. `accepts(turnID:seq:)` decides — dedup
+    /// and the turn check live on the cursor, in one place, so a resume boundary
+    /// cannot double-write text and one turn's frame cannot mark another's
+    /// progress.
     @discardableResult
     public func advanceTurn(messageID: UUID, turnID: String, seq: Int) throws -> Bool {
         guard let row = try storedMessage(id: messageID) else { return false }
         let current = StoredMapping.cursor(from: row) ?? TurnCursor(turnID: turnID)
-        // A frame from another turn is never this cursor's business — letting it
-        // through would mark one turn's progress with another's sequence.
-        guard current.turnID == turnID, current.shouldAccept(seq: seq) else { return false }
+        guard current.accepts(turnID: turnID, seq: seq) else { return false }
         let advanced = current.advanced(to: seq)
         row.turnID = advanced.turnID
         row.lastSeq = advanced.lastSeq
