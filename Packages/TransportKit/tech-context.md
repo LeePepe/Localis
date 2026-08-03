@@ -11,9 +11,9 @@ red_lines:
   - Parsers are pure value types (`SSEParser`), testable with no socket. Do not hide parsing inside a URLSession delegate.
   - Swift 6 strict concurrency; `AgentTransport` conformers must be genuinely `Sendable`.
 roles:
-  Types: [AgentTransport, SSEParser, EndpointValidator, StreamEventMapper, BackendCatalog, SkillCatalog, SPKIPinning, HostCredentialStore, BridgeDiscovery]
+  Types: [AgentTransport, BridgeClient, SSEParser, EndpointValidator, StreamEventMapper, BackendCatalog, SkillCatalog, SPKIPinning, HostCredentialStore, BridgeDiscovery]
 test: swift test --package-path Packages/TransportKit
-owns: [AgentTransport, TransportRequest, TransportEvent, SSEParser, EndpointValidator, StreamEventMapper, BackendCatalog, HostCapabilities, SkillCatalog, SPKIPinning, HostCredentialStore, KeychainError, BridgeDiscovery, DiscoveredHost]
+owns: [AgentTransport, TransportRequest, TransportEvent, BridgeClient, TurnRequest, SSEParser, EndpointValidator, StreamEventMapper, BackendCatalog, HostCapabilities, SkillCatalog, SPKIPinning, HostCredentialStore, KeychainError, BridgeDiscovery, DiscoveredHost]
 ---
 
 # TransportKit Context
@@ -65,6 +65,34 @@ constitution IV in practice — the bridge may add events and fields without an 
 release, so treating the unrecognised as fatal would break turns on exactly the
 frames a newer bridge added.
 
+## BridgeClient
+
+One client, one machine. `send` starts a turn, `resume` picks it up after a
+disconnect, `cancel` stops it, `models`/`skills` read the catalogues.
+
+`send` returns a `TurnStream` — the turn id *and* the events — because the id
+arrives in the `x-localis-turn-id` response header, before any body (contract
+§3.3). A turn whose id can only be learned by reading the stream is unresumable
+in exactly the case resume exists for: the connection dying early.
+
+Three rules about how a stream ends, and all three fail silently if inverted:
+
+- `[DONE]` closes it. Anything after is ignored (contract §7).
+- **Ending without `[DONE]` throws `connectionLost`**, keeping what arrived.
+  Finishing cleanly would present half an answer as a whole one.
+- **`x_localis.truncated` throws `truncated`, never completion** — "宁可说丢了,
+  不可假装完整" (§3.3).
+
+Resume dedupes on `TurnCursor.accepts(turnID:seq:)`, not `shouldAccept(seq:)`.
+`seq` counts per turn, so another turn's frames carry numbers in the same range
+and comparing sequence alone lets one turn's replay advance another's cursor.
+
+Errors map on the **pair** `(status, code)`, not on status alone: 401 splits into
+`unauthorized` and `tokenRevoked`, which demand opposite actions — one clears the
+Keychain entry, the other must not. The bridge's `error.message` is never read;
+it may hold absolute paths (constitution I), and a value nothing reads cannot
+leak.
+
 ## Endpoint validation
 
 **HTTPS only.** `EndpointValidator.allowedSchemes` is `["https"]` and there is no
@@ -94,3 +122,9 @@ and Bonjour's `hid=` only relocates a machine whose SPKI already matches.
 
 `HostCredentialStore` keys every entry by `HostID`, so a host-blind lookup is not
 something to remember not to write — there is no way to express it.
+
+`ArchitectureTests` sweeps `BridgeClient`, `BridgePairing` and
+`HostCredentialStore` for a *collection* of hosts (`[LocalisHost]`, `[HostID]`,
+`[HostEndpoint]`). Those three carry a host's credentials, and a collection is
+the shape that lets one machine's token or pin reach a request bound for another
+(FR-028) while looking perfectly reasonable at the call site.

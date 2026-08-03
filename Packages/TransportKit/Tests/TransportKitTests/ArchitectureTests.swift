@@ -170,4 +170,38 @@ struct ArchitectureTests {
             }
         }
     }
+
+    /// Amendment A §1.1: a client speaks to **one** host.
+    ///
+    /// `BridgeDiscovery` is the deliberate exception — it emits sightings one at
+    /// a time and keeps no collection — so the sweep names the files that carry
+    /// a host's credentials rather than the whole package. In those, a
+    /// collection of hosts is the shape that lets one machine's token or pinned
+    /// certificate reach a request bound for another (FR-028), and it would look
+    /// entirely reasonable at the call site.
+    @Test("credential-carrying code cannot address more than one host")
+    func noMultiHostInCredentialPath() throws {
+        let scoped: Set<String> = ["BridgeClient.swift", "BridgePairing.swift", "HostCredentialStore.swift"]
+        let files = try Self.sourceFiles().filter { scoped.contains($0.name) }
+
+        #expect(
+            files.count == scoped.count,
+            "a file in this sweep was renamed or removed — the rule stopped being checked"
+        )
+
+        for file in files {
+            for line in Self.codeLines(of: file.text) {
+                for shape in ["[LocalisHost]", "[HostID]", "[HostEndpoint]"] where line.text.contains(shape) {
+                    Issue.record(
+                        """
+                        \(file.name):\(line.number) holds \(shape). This layer is per-host: \
+                        one token, one pin, one protocol version. Multi-host orchestration \
+                        belongs above it (Amendment A §1.1).
+                        \(line.text)
+                        """
+                    )
+                }
+            }
+        }
+    }
 }

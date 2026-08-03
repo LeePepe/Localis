@@ -87,7 +87,10 @@ final class PinnedSessionDelegate: NSObject, URLSessionDelegate, Sendable {
 
 /// `URLSession` pinned to one host.
 struct PinnedHTTP: HTTPPerforming {
-    private let session: URLSession
+    /// Internal rather than private so the `HTTPStreaming` conformance can reach
+    /// it from its own file. Still not `public`: an unpinned session must not be
+    /// constructible from outside this package.
+    let session: URLSession
 
     /// - Parameter pin: the host's pinned SPKI, or nil during pairing, when
     ///   there is nothing to pin against yet.
