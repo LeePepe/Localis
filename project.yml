@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     ENABLE_USER_SCRIPT_SANDBOXING: true
-    DEVELOPMENT_TEAM: 4Z8GG667QD
+    DEVELOPMENT_TEAM: ${LOCALIS_TEAM_ID}
     CODE_SIGN_STYLE: Automatic
     # Single source of truth for the build number. CI overrides it via
     # `fastlane … xcargs CURRENT_PROJECT_VERSION=N`. Never hardcode this in a
@@ -109,6 +109,15 @@ targets:
       - package: LocalisModels
       - package: LocalisUI
       - package: DesignKit
+      # Assembly tests exercise the app's composition root, so the test target
+      # links the same layers the app does. Without these, a test naming
+      # `TurnRequest` or `SessionStoreContainer` compiles and then fails at
+      # *link* time — an error that reads as "this test is broken" rather than
+      # "this target is missing a dependency", which is a long way to walk for
+      # a one-line fix.
+      - package: TransportKit
+      - package: ChatService
+      - package: SessionStore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.leepepe.localis.tests

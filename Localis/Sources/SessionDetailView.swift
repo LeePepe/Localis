@@ -10,21 +10,38 @@ import SwiftUI
 /// Sending goes through `ChatService`, never through the repository directly —
 /// the service is the only thing that knows the *order* of persist-then-stream,
 /// and a view that saved its own message would write half a turn.
+///
+/// The transport under that service is `EchoTransport` for milestone A, and the
+/// screen says so. Everything else on the path is real: the session and its
+/// backend come from the store, the turn is persisted before it streams, and it
+/// is still there after a relaunch.
 @MainActor
 @Observable
 final class SessionDetailModel {
     private(set) var messages: [MessageState] = []
     private(set) var composer: ComposerState?
     private(set) var loadError: String?
+    /// The backend this session actually routes to, once resolved from the
+    /// store. `nil` means the send path is not usable — see `sendBlockedReason`.
+    private(set) var backend: AgentBackend?
+    /// Why sending is unavailable even though the composer itself is open.
+    ///
+    /// Separate from `ComposerState.blockedReason`, which answers "can this
+    /// *session* send" from its status. This one answers "did we find the
+    /// backend it names", and the two fail for unrelated reasons: an idle
+    /// session on an unpaired machine is open by status and unroutable in fact.
+    private(set) var sendBlockedReason: String?
 
     private let repository: any SessionRepository
     private let sessionID: UUID
+    private let service: ChatService
     private var session: Session?
     private var streamTask: Task<Void, Never>?
 
-    init(repository: any SessionRepository, sessionID: UUID) {
+    init(repository: any SessionRepository, sessionID: UUID, service: ChatService) {
         self.repository = repository
         self.sessionID = sessionID
+        self.service = service
     }
 
     func load() async {
@@ -37,10 +54,59 @@ final class SessionDetailModel {
                 return
             }
             apply(session)
+            await resolveBackend(for: session)
             loadError = nil
         } catch {
             loadError = (error as? LocalisError)?.userMessage ?? "Please try again."
         }
+    }
+
+    /// Finds the backend this session names, on the host it belongs to.
+    ///
+    /// Looked up by `(hostID, backendID)`, never by `backendID` alone: a backend
+    /// id is unique only within one machine (FR-029), so a bare match would let
+    /// a session route to a same-named agent on a *different* Mac — and the
+    /// reply would look entirely normal while coming from the wrong computer.
+    ///
+    /// Failure here is recorded rather than thrown. The transcript is still
+    /// fully readable when the host is gone (FR-036); only sending is lost, and
+    /// that is what the composer needs to be told.
+    private func resolveBackend(for session: Session) async {
+        do {
+            let backends = try await repository.backends(ofHost: session.hostID)
+            guard let match = backends.first(where: { $0.id == session.backendID }) else {
+                backend = nil
+                sendBlockedReason = String(
+                    localized: "This conversation's agent isn't on this Mac any more."
+                )
+                return
+            }
+            backend = match
+            // An unavailable backend is a different sentence from a missing one:
+            // signing in fixes the first, re-pairing the second. Collapsing them
+            // leaves the user with no idea which applies.
+            sendBlockedReason = match.isAvailable
+                ? nil
+                : String(localized: "This agent isn't signed in on the Mac.")
+        } catch {
+            backend = nil
+            sendBlockedReason = (error as? LocalisError)?.userMessage
+                ?? String(localized: "Couldn't check which agent this conversation uses.")
+        }
+    }
+
+    /// Sends the composer's draft, if there is somewhere to send it.
+    ///
+    /// Silently doing nothing is the one behaviour ruled out: a send button that
+    /// swallows the message is indistinguishable from a slow network, and the
+    /// user retypes. When the backend is missing, the reason is surfaced.
+    func submit(_ text: String) {
+        guard let backend else {
+            sendBlockedReason = sendBlockedReason
+                ?? String(localized: "This conversation has no agent to send to.")
+            return
+        }
+        send(text, using: service, to: backend)
     }
 
     /// Projects a session snapshot into what the two views render.
@@ -86,6 +152,9 @@ struct SessionDetailView: View {
 
     private let repository: any SessionRepository
     private let sessionID: UUID
+    /// Built once per view rather than per send: `ChatService` is an actor, and
+    /// a fresh one per tap would serialise nothing and lose any in-flight turn.
+    private let service: ChatService
 
     @State private var model: SessionDetailModel?
     @State private var draft: String = ""
@@ -93,6 +162,11 @@ struct SessionDetailView: View {
     init(repository: any SessionRepository, sessionID: UUID) {
         self.repository = repository
         self.sessionID = sessionID
+        // Milestone A's one fake. Everything under it — the session, the
+        // backend, the persistence, the streaming loop — is the real thing;
+        // only the far end is `EchoTransport`. Milestone B replaces this line
+        // with a `BridgeClient` and deletes the file.
+        self.service = ChatService(transport: EchoTransport(), repository: repository)
     }
 
     var body: some View {
@@ -105,7 +179,7 @@ struct SessionDetailView: View {
         }
         .task {
             let model = model ?? SessionDetailModel(
-                repository: repository, sessionID: sessionID
+                repository: repository, sessionID: sessionID, service: service
             )
             self.model = model
             await model.load()
@@ -122,17 +196,38 @@ struct SessionDetailView: View {
             )
         } else {
             VStack(spacing: 0) {
+                // The fake announces itself above the transcript, not buried
+                // under it. A screenshot of this screen has to carry the fact
+                // that no Mac is connected, because screenshots travel further
+                // than the code does and a convincing-looking conversation is
+                // exactly what would be believed.
+                StatusPill(EchoTransport.displayLabel, tone: .warning)
+                    .padding(.horizontal, Space.cardPadding)
+                    .padding(.bottom, 8)
+
                 TranscriptView(messages: model.messages)
+
+                // Why the backend is unroutable, when the session's own status
+                // would have let it send. `ComposerState.blockedReason` cannot
+                // carry this: it is derived from the session alone and knows
+                // nothing about whether the agent was found.
+                if let reason = model.sendBlockedReason {
+                    StatusPill(reason, tone: .danger)
+                        .padding(.horizontal, Space.cardPadding)
+                        .padding(.bottom, 8)
+                }
+
                 if let composer = model.composer {
                     ComposerView(
                         state: composer,
                         draft: $draft,
-                        // Sending needs a transport for this session's host,
-                        // which pairing does not yet provide. Left unwired
-                        // rather than faked: a send button that silently does
-                        // nothing is worse than one the composer has already
-                        // explained is closed.
-                        onSend: { _ in },
+                        onSend: { text in
+                            model.submit(text)
+                            // Cleared here rather than in the model: the draft
+                            // is this view's state, and a model that reached
+                            // back into it would own a field it cannot see.
+                            draft = ""
+                        },
                         onStop: { model.cancelStream() }
                     )
                 }
