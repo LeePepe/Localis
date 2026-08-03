@@ -11,7 +11,7 @@ public struct BackendCatalog: Sendable {
     /// What this machine can do — resume, retention, telemetry (§2.1).
     public let host: HostCapabilities
     /// The backends it exposes, in the order the bridge listed them.
-    public let backends: [BackendListing]
+    public let backends: [AgentBackend]
 
     /// Parses a `/v1/models` body.
     ///
@@ -24,38 +24,22 @@ public struct BackendCatalog: Sendable {
         }
 
         host = HostCapabilities(json: json["x_localis"])
-        backends = entries.compactMap(BackendListing.init(json:))
+        backends = entries.compactMap(Self.backend(from:))
     }
-}
 
-/// One backend plus whether it can be used right now.
-///
-/// Availability is separate from `AgentBackend` because it is an observation
-/// about this moment — an agent that is not logged in becomes available the
-/// second the user logs in — while the backend itself is a capability
-/// descriptor.
-public struct BackendListing: Sendable, Hashable {
-    public let backend: AgentBackend
-    public let availability: Availability
-
-    /// Whether the backend can take a request right now.
+    /// Reads one `data[]` entry, or nil to skip it.
     ///
-    /// The reason is carried so the UI can say something the user can act on
-    /// ("not logged in") instead of a bare "unavailable". It is a bridge-supplied
-    /// code, mapped to text locally — never a `switch` on which backend it is.
-    public enum Availability: Sendable, Hashable {
-        case available
-        case unavailable(reason: String?)
-    }
-
-    init?(json: JSONValue) {
+    /// Availability lives on `AgentBackend` itself rather than in a wrapper here:
+    /// two types carrying the same fact is two places for them to disagree, and
+    /// the one the UI reads would be the one that silently went stale.
+    private static func backend(from json: JSONValue) -> AgentBackend? {
         // The wire id is the identity. Without it there is nothing to send a
         // request to, so the entry is skipped rather than half-built.
         guard let id = json["id"]?.stringValue, !id.trimmed.isEmpty else { return nil }
 
         let extensions = json["x_localis"]
 
-        backend = AgentBackend(
+        return AgentBackend(
             id: id,
             // Falling back to the id keeps a nameless backend selectable. A
             // blank row would be indistinguishable from a rendering bug.
@@ -64,16 +48,16 @@ public struct BackendListing: Sendable, Hashable {
             // capabilities it knows, so an unrecognised one is inert — and
             // dropping it would erase a flag the moment a bridge ships one
             // (constitution IV).
-            capabilities: Set(extensions?["capabilities"]?.arrayValue?.compactMap(\.stringValue) ?? [])
+            capabilities: Set(
+                (extensions?["capabilities"]?.arrayValue?.compactMap(\.stringValue) ?? [])
+                    .map(Capability.init(rawValue:))
+            ),
+            // Absent means available: an older bridge does not send the field,
+            // and treating silence as "unavailable" would hide working backends.
+            availability: extensions?["available"]?.boolValue == false
+                ? .unavailable(reason: extensions?["unavailable_reason"]?.stringValue)
+                : .available
         )
-
-        // Absent means available: an older bridge does not send the field, and
-        // treating silence as "unavailable" would hide working backends.
-        if extensions?["available"]?.boolValue == false {
-            availability = .unavailable(reason: extensions?["unavailable_reason"]?.stringValue)
-        } else {
-            availability = .available
-        }
     }
 }
 

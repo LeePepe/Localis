@@ -11,9 +11,9 @@ red_lines:
   - Parsers are pure value types (`SSEParser`), testable with no socket. Do not hide parsing inside a URLSession delegate.
   - Swift 6 strict concurrency; `AgentTransport` conformers must be genuinely `Sendable`.
 roles:
-  Types: [AgentTransport, SSEParser, EndpointValidator, StreamEvent, StreamEventMapper, BackendCatalog, SkillCatalog, SPKIPinning, HostCredentialStore, BridgeDiscovery]
+  Types: [AgentTransport, SSEParser, EndpointValidator, StreamEventMapper, BackendCatalog, SkillCatalog, SPKIPinning, HostCredentialStore, BridgeDiscovery]
 test: swift test --package-path Packages/TransportKit
-owns: [AgentTransport, TransportRequest, TransportEvent, SSEParser, EndpointValidator, StreamEvent, SequencedEvent, StreamEventMapper, BackendCatalog, BackendListing, HostCapabilities, SkillCatalog, SPKIPinning, HostCredentialStore, KeychainError, BridgeDiscovery, DiscoveredHost]
+owns: [AgentTransport, TransportRequest, TransportEvent, SSEParser, EndpointValidator, StreamEventMapper, BackendCatalog, HostCapabilities, SkillCatalog, SPKIPinning, HostCredentialStore, KeychainError, BridgeDiscovery, DiscoveredHost]
 ---
 
 # TransportKit Context
@@ -47,6 +47,23 @@ call. `parse` returns `(frames, next)` rather than mutating — so a test can
 replay any chunk boundary, including a split mid-frame.
 
 Comment lines (`:` in column 0) are SSE keep-alives and yield no frame.
+
+## What leaves this package
+
+`StreamEventMapper` turns an `SSEParser.Frame` into a `StreamEvent`, which
+**LocalisModels owns** — not this package. The reason is `LocalisUI`, whose
+`depends_on` has no TransportKit in it: the UI has to render tool durations and
+"failed 8 minutes in, after 3 tool calls", so a stream type living here would be
+unreachable from the layer that displays it.
+
+What stays here is everything that knows the wire: the mapper itself, the
+`x_localis` envelopes, `JSONValue`, `[DONE]`. Above this line the app sees domain
+events and never a wire shape (plan §1.1).
+
+A frame the mapper cannot read yields `nil` and the stream continues. That is
+constitution IV in practice — the bridge may add events and fields without an iOS
+release, so treating the unrecognised as fatal would break turns on exactly the
+frames a newer bridge added.
 
 ## Endpoint validation
 

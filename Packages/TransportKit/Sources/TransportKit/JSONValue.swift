@@ -1,4 +1,5 @@
 import Foundation
+import LocalisModels
 
 /// A decoded JSON value, read by key rather than by struct shape.
 ///

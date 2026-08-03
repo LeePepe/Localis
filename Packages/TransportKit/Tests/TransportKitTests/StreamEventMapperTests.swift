@@ -1,4 +1,5 @@
 import Foundation
+import LocalisModels
 import Testing
 
 @testable import TransportKit

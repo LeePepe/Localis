@@ -26,16 +26,16 @@ struct BackendCatalogTests {
     func decodesRecordedBackends() throws {
         let catalog = try recorded()
 
-        #expect(catalog.backends.map(\.backend.id) == ["alpha", "beta", "gamma", "delta"])
+        #expect(catalog.backends.map(\.id) == ["alpha", "beta", "gamma", "delta"])
     }
 
     @Test("reads display name and capabilities from x_localis")
     func readsDisplayNameAndCapabilities() throws {
-        let backend = try #require(recorded().backends.first).backend
+        let backend = try #require(recorded().backends.first)
 
         #expect(backend.id == "alpha")
         #expect(backend.displayName == "Alpha Agent")
-        #expect(backend.capabilities == ["streaming", "tools", "skills", "workspace"])
+        #expect(backend.capabilities == [.streaming, .tools, .skills, .workspace])
     }
 
     @Test("an unknown capability value is kept and the backend stays usable")
@@ -44,34 +44,34 @@ struct BackendCatalogTests {
         // client checks capabilities it knows by name, so an unrecognised one is
         // inert, and dropping it here would erase a feature flag the moment the
         // bridge ships one.
-        let beta = try #require(recorded().backends.first { $0.backend.id == "beta" }).backend
+        let beta = try #require(recorded().backends.first { $0.id == "beta" })
 
-        #expect(beta.capabilities.contains("invented_later"))
-        #expect(beta.capabilities.contains("streaming"))
+        #expect(beta.capabilities.contains(Capability(rawValue: "invented_later")))
+        #expect(beta.capabilities.contains(.streaming))
     }
 
     @Test("a backend with no x_localis degrades instead of failing")
     func missingExtensionDegrades() throws {
         // Contract §7: "某项缺 x_localis → 用默认 capability 降级处理，不崩".
-        let delta = try #require(recorded().backends.first { $0.backend.id == "delta" })
+        let delta = try #require(recorded().backends.first { $0.id == "delta" })
 
-        #expect(delta.backend.displayName == "delta", "falls back to the wire id")
-        #expect(delta.backend.capabilities.isEmpty)
+        #expect(delta.displayName == "delta", "falls back to the wire id")
+        #expect(delta.capabilities.isEmpty)
         #expect(delta.availability == .available, "absent availability is not unavailability")
     }
 
     @Test("unknown fields on a backend are ignored")
     func unknownBackendFieldsIgnored() throws {
-        let beta = try #require(recorded().backends.first { $0.backend.id == "beta" })
+        let beta = try #require(recorded().backends.first { $0.id == "beta" })
 
-        #expect(beta.backend.displayName == "Beta Agent")
+        #expect(beta.displayName == "Beta Agent")
     }
 
     @Test("an unavailable backend keeps its reason")
     func unavailableBackendKeepsReason() throws {
         // The user needs to be told *why* — "codex is not logged in" is
         // actionable, "unavailable" is not.
-        let gamma = try #require(recorded().backends.first { $0.backend.id == "gamma" })
+        let gamma = try #require(recorded().backends.first { $0.id == "gamma" })
 
         #expect(gamma.availability == .unavailable(reason: "not_logged_in"))
     }
@@ -89,28 +89,28 @@ struct BackendCatalogTests {
         // every other backend on the machine.
         let catalog = try decode(#"{"data":[{"object":"model"},{"id":"good"}]}"#)
 
-        #expect(catalog.backends.map(\.backend.id) == ["good"])
+        #expect(catalog.backends.map(\.id) == ["good"])
     }
 
     @Test("a blank id is skipped")
     func blankIDIsSkipped() throws {
         let catalog = try decode(#"{"data":[{"id":"   "},{"id":"good"}]}"#)
 
-        #expect(catalog.backends.map(\.backend.id) == ["good"])
+        #expect(catalog.backends.map(\.id) == ["good"])
     }
 
     @Test("a non-object entry is skipped")
     func nonObjectEntryIsSkipped() throws {
         let catalog = try decode(#"{"data":["nonsense",{"id":"good"}]}"#)
 
-        #expect(catalog.backends.map(\.backend.id) == ["good"])
+        #expect(catalog.backends.map(\.id) == ["good"])
     }
 
     @Test("a non-string capability is skipped without losing the backend")
     func nonStringCapabilitySkipped() throws {
         let catalog = try decode(#"{"data":[{"id":"a","x_localis":{"capabilities":["streaming",7,null]}}]}"#)
 
-        #expect(catalog.backends.first?.backend.capabilities == ["streaming"])
+        #expect(catalog.backends.first?.capabilities == [.streaming])
     }
 
     @Test("an empty catalogue is valid, not an error")

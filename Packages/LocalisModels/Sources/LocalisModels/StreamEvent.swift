@@ -106,7 +106,13 @@ public struct ToolCall: Hashable, Sendable {
         case denied
         case unknown(String)
 
-        init(wire: String) {
+        /// Maps the wire spelling, keeping anything unrecognised intact.
+        ///
+        /// Public because the mapper that calls it lives in another module. Kept
+        /// here rather than duplicated there so "unknown never becomes `error`"
+        /// is stated once — a second copy is a second chance to get the fallback
+        /// wrong, and wrong here reports a success as a failure.
+        public init(wire: String) {
             switch wire {
             case "ok": self = .ok
             case "error": self = .error
@@ -213,7 +219,8 @@ public struct TurnEnd: Hashable, Sendable {
         case cancelled
         case unknown(String)
 
-        init(wire: String) {
+        /// Maps the wire spelling, keeping anything unrecognised intact.
+        public init(wire: String) {
             switch wire {
             case "completed": self = .completed
             case "failed": self = .failed

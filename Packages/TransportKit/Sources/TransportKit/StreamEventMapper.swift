@@ -1,4 +1,5 @@
 import Foundation
+import LocalisModels
 
 /// Turns one SSE frame into a domain `StreamEvent`.
 ///
