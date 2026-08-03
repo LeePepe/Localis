@@ -102,6 +102,18 @@ final class SessionDetailModel {
     /// user retypes. When the backend is missing, the reason is surfaced.
     func submit(_ text: String) {
         guard let backend else {
+            // The `??` fallback is expected to be unreachable once `load()` has
+            // run: `resolveBackend` sets a reason on all three of its failure
+            // branches. Keep it anyway — this is not dead code to tidy away.
+            //
+            // What it buys is not coverage, it is the *shape of the failure* if
+            // that invariant ever breaks. Nothing in the type system holds it:
+            // a fourth branch in `resolveBackend`, or an early return, would
+            // silently leave `backend == nil` with no reason set. With this
+            // line, that regression surfaces as one more sentence on screen.
+            // Without it, the send button simply stops working — which is
+            // indistinguishable from a slow network, so the user retypes rather
+            // than learning that no agent is attached.
             sendBlockedReason = sendBlockedReason
                 ?? String(localized: "This conversation has no agent to send to.")
             return
