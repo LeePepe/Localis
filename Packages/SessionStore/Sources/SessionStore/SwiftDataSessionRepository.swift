@@ -61,6 +61,21 @@ public actor SwiftDataSessionRepository {
         try stored(id: id).map(StoredMapping.session(from:))
     }
 
+    /// Every known machine, alphabetical so the host picker is stable.
+    ///
+    /// Sorted here rather than by the caller, same as `backends(ofHost:)`: this
+    /// is a list the user taps, and rows that reorder between launches are rows
+    /// they mis-tap.
+    public func hosts() throws -> [LocalisHost] {
+        try modelContext.fetch(FetchDescriptor<StoredHost>())
+            .map(StoredMapping.host(from:))
+            .sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
+    }
+
+    public func host(id: HostID) throws -> LocalisHost? {
+        try storedHost(id: id).map(StoredMapping.host(from:))
+    }
+
     /// Backends advertised by one machine, alphabetical so the picker is stable.
     public func backends(ofHost hostID: HostID) throws -> [AgentBackend] {
         let raw = hostID.rawValue
@@ -162,11 +177,49 @@ public actor SwiftDataSessionRepository {
         try modelContext.save()
     }
 
+    /// Inserts a machine, or updates the one that already has this id.
+    ///
+    /// Upsert rather than insert because the id is fixed for life (FR-026):
+    /// a rename, a DHCP move and a completed pairing all arrive here as a save
+    /// on an id that already exists. Inserting would put the same Mac in the
+    /// list twice, and half its sessions would point at the copy the user
+    /// didn't pick.
+    ///
+    /// Refuses `HostID.unattributed`. That value is a marker meaning "no
+    /// machine", and a row for it would appear in `hosts()` as a pairable Mac
+    /// the user could tap. It is rejected here rather than filtered on read so
+    /// the store never holds one at all — see `UnattributedHost`.
+    public func save(_ host: LocalisHost) throws {
+        guard !host.id.isUnattributed else {
+            throw LocalisError.invalidInput(field: "hostID")
+        }
+        if let existing = try storedHost(id: host.id) {
+            StoredMapping.apply(host, to: existing)
+        } else {
+            modelContext.insert(StoredMapping.makeStored(host))
+        }
+        try modelContext.save()
+    }
+
     // MARK: - Deleting
 
     /// Deletes a session and its transcript. Idempotent.
     public func delete(id: UUID) throws {
         guard let row = try stored(id: id) else { return }
+        modelContext.delete(row)
+        try modelContext.save()
+    }
+
+    /// Forgets a machine. Idempotent.
+    ///
+    /// **Its conversations are deliberately left behind.** Removing a machine
+    /// from the list is the same promise unpairing makes: credentials go,
+    /// history stays readable (FR-027, FR-036). This is also why the schema has
+    /// no cascade from host to session — a relationship with `.cascade` would
+    /// make this method quietly destroy transcripts, and it would look like the
+    /// tidier design right up until a user lost a year of work.
+    public func deleteHost(id hostID: HostID) throws {
+        guard let row = try storedHost(id: hostID) else { return }
         modelContext.delete(row)
         try modelContext.save()
     }
@@ -386,6 +439,13 @@ public actor SwiftDataSessionRepository {
 
     private func storedMessage(id: UUID) throws -> StoredMessage? {
         var descriptor = FetchDescriptor<StoredMessage>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first
+    }
+
+    private func storedHost(id hostID: HostID) throws -> StoredHost? {
+        let raw = hostID.rawValue
+        var descriptor = FetchDescriptor<StoredHost>(predicate: #Predicate { $0.id == raw })
         descriptor.fetchLimit = 1
         return try modelContext.fetch(descriptor).first
     }

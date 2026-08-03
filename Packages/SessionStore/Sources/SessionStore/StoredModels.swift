@@ -1,4 +1,5 @@
 import Foundation
+import LocalisModels
 import SwiftData
 
 /// Persistent shape of a conversation.
@@ -137,6 +138,82 @@ final class StoredMessage {
         self.text = text
         self.createdAt = createdAt
         self.statusRaw = statusRaw
+    }
+}
+
+/// Persistent shape of a machine running `localis-bridge`.
+///
+/// **No credential column, ever** (constitution I). The pairing token lives in
+/// the Keychain, keyed by host id. A token column here would be read back into
+/// every `LocalisHost`, and from there into every log line, snapshot and encoder
+/// that touches one — which is the exact leak the domain type refuses to model.
+/// `StoredHostTests.hostTableShapeIsPinned` asserts this against the built
+/// schema, so adding the field turns a test red rather than merely contradicting
+/// a comment.
+///
+/// `pinnedSPKIBase64` is stored and is *not* a secret: it is a hash of a public
+/// key, and it is the whole of certificate pinning (FR-028). Dropping it would
+/// silently turn pinning off.
+///
+/// **Deliberately not related to `StoredSession` or `StoredBackend`.** Those two
+/// carry bare `UUID` host keys and keep doing so, for two reasons:
+///
+/// 1. `HostID.unattributed` is a sentinel meaning "no machine". A real
+///    relationship would need a row for it, and that row is one `hosts()` would
+///    hand the UI as a pairable Mac.
+/// 2. A cascade from host to session is the "obvious" schema and is wrong:
+///    removing a machine from the list would destroy its transcripts, which
+///    FR-027/FR-036 forbid even on unpairing.
+///
+/// So the missing `@Relationship` is the design, not an omission — please do not
+/// "fix" it.
+///
+/// Every stored property has a default so adding this table stays a lightweight
+/// migration: an existing user's store must gain the table without losing a
+/// conversation (`addingTheHostTableLosesNothing`).
+@Model
+final class StoredHost {
+    #Index<StoredHost>([\.id])
+    #Unique<StoredHost>([\.id])
+
+    var id: UUID = UUID()
+    var displayName: String = ""
+    /// Endpoint flattened into two columns rather than an embedded value: the
+    /// pair is what the transport needs and neither half is queried alone.
+    var endpointHost: String = ""
+    var endpointPort: Int = 0
+    /// The bridge's self-reported instance id, when it sent one. Never an
+    /// identity authority — `id` is.
+    var bridgeID: String?
+    /// SHA-256 of the pinned certificate's SPKI, base64. Public-key material.
+    var pinnedSPKIBase64: String?
+    /// Raw `HostPairingState` — a string, so a state written by a newer build
+    /// degrades to a decode fallback instead of making the host unreadable.
+    var pairingStateRaw: String = HostPairingState.discovered.rawValue
+    var protocolVersion: Int = 1
+    /// Raw `HostKind`. Icon and wording only.
+    var kindRaw: String = HostKind.mac.rawValue
+
+    init(
+        id: UUID,
+        displayName: String,
+        endpointHost: String,
+        endpointPort: Int,
+        bridgeID: String?,
+        pinnedSPKIBase64: String?,
+        pairingStateRaw: String,
+        protocolVersion: Int,
+        kindRaw: String
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.endpointHost = endpointHost
+        self.endpointPort = endpointPort
+        self.bridgeID = bridgeID
+        self.pinnedSPKIBase64 = pinnedSPKIBase64
+        self.pairingStateRaw = pairingStateRaw
+        self.protocolVersion = protocolVersion
+        self.kindRaw = kindRaw
     }
 }
 
