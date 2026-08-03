@@ -38,6 +38,10 @@ cd "$REPO" || exit 1
 
 TARGET="Localis/Sources/HostAssembly.swift"
 SUITE="Joining a stored machine to its pin"
+# The floor the run must clear to be believed at all. Not the exact count —
+# that would go stale on every added test and train people to bump it without
+# reading. It is a smoke alarm for "the selector matched almost nothing".
+MIN_TESTS=20
 DEVICE="${LOCALIS_SIM_UDID:-}"
 WORK="$(mktemp -d)"
 ORIGINAL="$WORK/original.swift"
@@ -82,6 +86,24 @@ run_suite() {
         -skipPackagePluginValidation > "$log" 2>&1
 
     if grep -q '\*\* TEST SUCCEEDED \*\*' "$log"; then
+        # A green run that executed nothing is not a survivor — it is a broken
+        # selector. `-only-testing:LocalisTests` names a target, and a target
+        # that has been renamed or emptied still exits SUCCEEDED with zero
+        # tests. That prints identically to "the mutation was invisible to the
+        # suite", which is the single most misleading confusion this script can
+        # produce: it turns a tooling fault into a finding.
+        #
+        # The count is read from the run's own summary rather than assumed.
+        # Anything below the floor means the selector, not the code, is what
+        # changed.
+        local count
+        count="$(grep -oE 'Test run with [0-9]+ test' "$log" | grep -oE '[0-9]+' | tail -1)"
+        if [[ -z "$count" || "$count" -lt "$MIN_TESTS" ]]; then
+            echo "    --- ran ${count:-0} tests, expected at least $MIN_TESTS ---" >&2
+            echo "    --- the selector is wrong; no conclusion is possible ---" >&2
+            echo "NOTRUN"
+            return
+        fi
         echo "SUCCEEDED"
     elif grep -q '\*\* TEST FAILED \*\*' "$log"; then
         # Distinguish "assertions failed" from "did not compile". Both print
@@ -206,6 +228,11 @@ for entry in "${MUTANTS[@]}"; do
             echo "    *** SURVIVED *** — this break is invisible to the tests."
             echo "    expected catcher (did not fire): $catcher"
             SURVIVORS=$((SURVIVORS + 1))
+            ;;
+        NOTRUN)
+            echo "    ABORTED — the run executed too few tests to mean anything."
+            echo "    Not a survivor: the selector is broken, not the suite."
+            exit 1
             ;;
         BROKEN)
             echo "    DUD — the mutant did not compile, so no test ran."
