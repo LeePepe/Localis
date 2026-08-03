@@ -12,10 +12,10 @@ red_lines:
   - UI strings go through `String(localized:)`. No hardcoded user-facing text.
   - A `detached` turn renders no retry control — not disabled, not behind a confirmation. Absent. See "The third detached layer".
 roles:
-  Types: [SessionRowState, MessageState]
-  UI: [SessionListView]
+  Types: [SessionRowState, MessageState, ComposerState, Layout]
+  UI: [SessionListView, TranscriptView, ComposerView]
 test: swift test --package-path Packages/LocalisUI
-owns: [SessionRowState, SessionRow, SessionListView, MessageState, MessageAction, FailureDetail]
+owns: [SessionRowState, SessionRow, SessionListView, MessageState, MessageAction, FailureDetail, ComposerState, MessageRow, TranscriptView, ComposerView, Layout]
 ---
 
 # LocalisUI Context
@@ -73,6 +73,41 @@ the design contract says a value the backend never sent makes its row disappear,
 and a zeroed detail would render "failed instantly, after 0 tool calls" — a
 number nobody reported. Zero *is* meaningful when it arrives from the host; it is
 never manufactured locally.
+
+## A blocked composer says why
+
+FR-053 asks a session that cannot deliver to refuse input *visibly*. So
+`ComposerState` carries a `blockedReason: String?`, not a `Bool` — and every
+branch names a different user action:
+
+| status | what the user should do |
+|---|---|
+| `disconnected` | wait, or bring the Mac back on the network |
+| `connecting` | wait |
+| `streaming` | wait for the current reply |
+| `orphaned` | pair the Mac again |
+| `error` | whatever `LocalisError.userMessage` says |
+
+Collapsing these into one "unavailable" is the failure this design is avoiding:
+a greyed field with no explanation is the same dead end as one that accepts text
+and fails on send.
+
+Sendability itself is *not* re-derived here — `ComposerState.make` reads
+`Session.canSend`. A second opinion would drift from the first, and then one of
+them is lying to the user.
+
+## Layout constants live in `Layout`, temporarily
+
+`Layout` holds the three §7 numbers DesignKit does not yet own — reading measure
+700pt, chrome inset 21pt, bottom fade 132pt — each with its contract line quoted.
+They belong in DesignKit beside `Space` and `Radius`; they sit here so that no
+`body` grows a numeric literal in the meantime, and so the eventual migration is
+a move rather than a re-derivation. `LayoutTests` pins the values, because
+numbers like these look arbitrary in a diff and invite tidying.
+
+Note `Space.contentMaxWidth` (1200) is *not* the reading measure. It is a
+dashboard width; a transcript is prose, and prose gets harder to read as the
+measure grows.
 
 ## Empty vs. failed
 
