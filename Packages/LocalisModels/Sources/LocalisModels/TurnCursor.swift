@@ -48,9 +48,23 @@ public struct TurnCursor: Hashable, Codable, Sendable {
     ///
     /// At the replay boundary the bridge may resend frames the client already
     /// has. Accepting one twice is how a transcript grows duplicated text.
+    ///
+    /// A *gap* is accepted on purpose: the bridge decides what to replay, and a
+    /// client that demanded consecutive `seq` would strand a turn forever the
+    /// moment the bridge skipped one.
     public func shouldAccept(seq: Int) -> Bool {
         guard let lastSeq else { return true }
         return seq > lastSeq
+    }
+
+    /// Whether an arriving event belongs to this turn *and* is new.
+    ///
+    /// The turn check is not redundant with `shouldAccept`. `seq` counts per
+    /// turn, so another turn's frame carries numbers in exactly the same range —
+    /// comparing sequence alone would let one turn's progress mark another's.
+    /// Prefer this over `shouldAccept` wherever the turn id is at hand.
+    public func accepts(turnID incomingTurnID: String, seq: Int) -> Bool {
+        incomingTurnID == turnID && shouldAccept(seq: seq)
     }
 
     /// Advances the cursor, ignoring anything that would move it backwards.

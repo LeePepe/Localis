@@ -86,4 +86,38 @@ struct TurnCursorTests {
         // §3.3. Two turns at the same seq are not interchangeable.
         #expect(TurnCursor(turnID: "t-1", lastSeq: 5) != TurnCursor(turnID: "t-2", lastSeq: 5))
     }
+
+    @Test("a frame from another turn is refused outright")
+    func foreignTurnFrameIsRefused() {
+        // Contract §3.3 files resumed content by (hostID, sessionID, turnID).
+        // Sequence numbers count per turn, so turn B's seq 43 is a perfectly
+        // plausible number for turn A's cursor — comparing seq alone would let
+        // one turn's progress silently mark another's.
+        let cursor = TurnCursor(turnID: "t-9", lastSeq: 42)
+
+        #expect(!cursor.accepts(turnID: "t-8", seq: 43))
+        #expect(cursor.accepts(turnID: "t-9", seq: 43))
+    }
+
+    @Test("a fresh cursor still refuses another turn's first frame")
+    func foreignTurnRefusedEvenWhenEmpty() {
+        // The `lastSeq == nil` path takes an early return in the seq check, so
+        // the turn guard has to hold there too.
+        let cursor = TurnCursor(turnID: "t-9")
+
+        #expect(!cursor.accepts(turnID: "t-8", seq: 0))
+        #expect(cursor.accepts(turnID: "t-9", seq: 0))
+    }
+
+    @Test("a gap in sequence numbers is accepted, not stalled")
+    func gapIsAccepted() {
+        // The bridge decides what to replay after a resume. If the client
+        // demanded strictly consecutive seq, a turn whose intermediate frames
+        // the bridge chose not to replay would never advance again — stranding
+        // it forever is a worse failure than a gap.
+        let cursor = TurnCursor(turnID: "t-9", lastSeq: 42)
+
+        #expect(cursor.shouldAccept(seq: 99))
+        #expect(cursor.advanced(to: 99).lastSeq == 99)
+    }
 }
