@@ -47,6 +47,27 @@ if echo "$STAGED" | grep -q 'tech-context\.md$'; then
   fi
 fi
 
+# ---- 2b. Wiring: the app target must import what project.yml declares -------
+#
+# Only when the app target or its build config is staged — a commit touching
+# only Packages/ cannot change this answer.
+#
+# Advisory, not blocking, and deliberately so: the check is RED today (#16),
+# so a blocking version would refuse every commit including the ones that fix
+# it. The self-test *is* blocking, because a check that can no longer fail is
+# the failure this whole exercise exists to prevent.
+
+if echo "$STAGED" | grep -qE '^(Localis/|project\.yml$)'; then
+  if [ -x scripts/check-wiring.sh ]; then
+    if ! bash scripts/check-wiring.sh --self-test >/dev/null; then
+      echo "❌ scripts/check-wiring.sh can no longer detect an unwired package."
+      echo "   A green wiring check that cannot fail is worse than none. Commit aborted."
+      exit 1
+    fi
+    bash scripts/check-wiring.sh || true
+  fi
+fi
+
 # ---- 3. Incremental per-layer swift build + test ----------------------------
 # Map staged paths → touched Packages/<X> layers, then build+test each.
 # Fast (SPM, no simulator). Untouched layers are never built.

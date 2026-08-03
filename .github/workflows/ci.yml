@@ -92,3 +92,20 @@ jobs:
       # Layer frontmatter must stay consistent with the packages on disk.
       - name: Layer frontmatter anti-rot check
         run: bash scripts/check-frontmatter.sh
+      # The self-test runs first and is not redundant: a wiring check that has
+      # quietly become incapable of failing is worse than no check at all,
+      # because its green tells the next person the assembly is sound.
+      - name: Wiring check can still fail
+        run: bash scripts/check-wiring.sh --self-test
+      # RED ON PURPOSE until the assembly layer lands (#16). `project.yml`
+      # declares ChatService / TransportKit / SkillsKit under the app target
+      # and no file under Localis/Sources/ imports any of them.
+      #
+      # `continue-on-error` because this reports a known, tracked gap rather
+      # than a regression introduced by the commit under test — blocking every
+      # PR on it would train people to ignore the job. It goes to `false` in
+      # the same commit that makes the check green, and the self-test above
+      # stays blocking meanwhile so the check cannot rot unnoticed.
+      - name: App target imports what it declares
+        continue-on-error: true
+        run: bash scripts/check-wiring.sh
