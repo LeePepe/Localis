@@ -8,19 +8,27 @@ import LocalisModels
 @Suite("SessionRowState")
 struct SessionRowStateTests {
     private static let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+    private static let hostA = HostID(rawValue: UUID(uuidString: "AAAAAAAA-0000-0000-0000-000000000001")!)
 
     private static func makeBackend(id: String, name: String) -> AgentBackend {
-        AgentBackend(id: id, displayName: name, capabilities: ["streaming"])
+        AgentBackend(id: id, displayName: name, capabilities: [.streaming])
     }
 
-    private static func makeSession(backendID: String, messages: [Message]) -> Session {
+    private static func makeSession(
+        backendID: String,
+        messages: [Message],
+        hostID: HostID = hostA,
+        status: SessionStatus = .idle
+    ) -> Session {
         Session(
             id: UUID(),
+            hostID: hostID,
             backendID: backendID,
             title: "Session",
             messages: messages,
             createdAt: t0,
-            updatedAt: t0
+            updatedAt: t0,
+            status: status
         )
     }
 
