@@ -12,9 +12,9 @@ red_lines:
   - `HostRuntimeState` is deliberately not `Codable` — reachability and latency are derived, never persisted.
   - The bridge's own `error.message` is never carried into `LocalisError` — it may contain absolute paths. UI text is derived locally from the code.
 roles:
-  Types: [LocalisHost, HostRuntimeState, HostRecognition, AgentBackend, BackendRef, Message, Session, TurnCursor, TurnFailure, SkillDescriptor, LocalisError]
+  Types: [LocalisHost, HostRuntimeState, HostRecognition, AgentBackend, Capability, BackendRef, Message, Session, TurnCursor, TurnFailure, SkillDescriptor, LocalisError]
 test: swift test --package-path Packages/LocalisModels
-owns: [LocalisHost, HostID, HostEndpoint, SPKIHash, HostPairingState, HostKind, HostRuntimeState, HostReachability, HostUnreachableReason, HostRecognition, AgentBackend, BackendAvailability, BackendRef, Message, MessageRole, MessageStatus, Session, SessionStatus, TurnCursor, TurnFailure, SkillDescriptor, LocalisError]
+owns: [LocalisHost, HostID, HostEndpoint, SPKIHash, HostPairingState, HostKind, HostRuntimeState, HostReachability, HostUnreachableReason, HostRecognition, AgentBackend, BackendAvailability, Capability, BackendRef, Message, MessageRole, MessageStatus, Session, SessionStatus, TurnCursor, TurnFailure, SkillDescriptor, LocalisError]
 ---
 
 # LocalisModels Context
@@ -32,6 +32,7 @@ asymmetry is deliberate — it is what keeps the dependency graph acyclic.
 | `HostRecognition` | Decides whether a discovered bridge is a machine already on file (FR-031) |
 | `HostRuntimeState` | Reachability / latency / last-seen — derived, never persisted |
 | `AgentBackend` | A backend advertised by the bridge: id, label, capability set |
+| `Capability` | A named-but-open capability a backend advertises (contract §2) |
 | `BackendRef` | The composite key `(hostID, backendID)` that names a backend across hosts (FR-029) |
 | `Message` | One turn: role, text, timestamp, delivery status |
 | `Session` | A conversation bound to one host; holds the transcript |
@@ -121,6 +122,23 @@ anything happened at all, let alone whether to retry.
 Note the two are not distinguished by how *transient* they feel. A live stream
 and a failed turn are equally momentary; the difference is only that one can be
 asked again and the other cannot. Apply the question, not the intuition.
+
+## Capabilities are named but not closed
+
+Contract §2 asks for two things in one sentence: capabilities have a documented
+set of values, *and* "客户端必须忽略未知值，**不得因此丢弃整项**". A closed `enum`
+delivers only the first — decoding a capability this build has never heard of
+fails, and the failure takes the whole backend with it. The user loses an agent
+from the picker because the host advertised one extra word.
+
+`Capability` is therefore a `struct` over the wire string with named statics.
+`supports(.streaming)` is still checked at compile time — a typo like
+`.steaming` will not build, where `"steaming"` used to return `false` forever —
+while an unrecognised value round-trips intact. `isKnown` exists for deciding
+whether the UI can draw an icon, never for deciding whether to keep the value.
+
+The wire spells one of them `requires_network`; the conversion lives inside the
+type so no call site has to track which side of the boundary it is on.
 
 ## Error mapping
 

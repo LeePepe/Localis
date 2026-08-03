@@ -104,7 +104,7 @@ struct AgentBackendTests {
         AgentBackend(
             id: "claude-sonnet",
             displayName: "MacBook Claude",
-            capabilities: ["streaming", "tools"]
+            capabilities: [.streaming, .tools]
         )
     }
 
@@ -127,9 +127,9 @@ struct AgentBackendTests {
         // set of backend names, adding a sixth agent needs an App Store release.
         let backend = Self.makeBackend()
 
-        #expect(backend.supports("streaming"))
-        #expect(backend.supports("tools"))
-        #expect(!backend.supports("resume"))
+        #expect(backend.supports(.streaming))
+        #expect(backend.supports(.tools))
+        #expect(!backend.supports(Capability(rawValue: "resume")))
     }
 
     @Test("a backend advertising nothing supports nothing")
@@ -137,7 +137,7 @@ struct AgentBackendTests {
         let bare = AgentBackend(id: "bare", displayName: "Bare")
 
         #expect(bare.capabilities.isEmpty)
-        #expect(!bare.supports("streaming"))
+        #expect(!bare.supports(.streaming))
     }
 }
 

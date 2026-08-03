@@ -45,7 +45,7 @@ struct BackendRefTests {
 
     @Test("a ref is built by qualifying a backend with its host")
     func qualifyingABackendProducesARef() {
-        let backend = AgentBackend(id: "codex", displayName: "Codex", capabilities: ["streaming"])
+        let backend = AgentBackend(id: "codex", displayName: "Codex", capabilities: [.streaming])
 
         let ref = backend.ref(on: Self.hostA)
 
@@ -80,9 +80,9 @@ struct BackendRefTests {
     func backendRemainsCapabilityData() {
         // Guards the e17c2f1 refactor: a closed enum here would mean every new
         // agent needs an App Store release (constitution IV).
-        let sixth = AgentBackend(id: "brand-new-agent", displayName: "New", capabilities: ["streaming"])
+        let sixth = AgentBackend(id: "brand-new-agent", displayName: "New", capabilities: [.streaming])
 
-        #expect(sixth.supports("streaming"))
-        #expect(!sixth.supports("workspace"))
+        #expect(sixth.supports(.streaming))
+        #expect(!sixth.supports(.workspace))
     }
 }

@@ -53,12 +53,12 @@ struct AgentBackendAvailabilityTests {
         let backend = AgentBackend(
             id: "codex",
             displayName: "Codex",
-            capabilities: ["streaming", "tools"],
+            capabilities: [.streaming, .tools],
             availability: .unavailable(reason: "not_logged_in")
         )
 
-        #expect(backend.supports("streaming"))
-        #expect(backend.supports("tools"))
+        #expect(backend.supports(.streaming))
+        #expect(backend.supports(.tools))
         #expect(!backend.isAvailable)
     }
 
@@ -67,7 +67,7 @@ struct AgentBackendAvailabilityTests {
         let original = AgentBackend(
             id: "codex",
             displayName: "Codex",
-            capabilities: ["streaming"],
+            capabilities: [.streaming],
             availability: .unavailable(reason: "not_logged_in")
         )
 
@@ -84,7 +84,7 @@ struct AgentBackendAvailabilityTests {
         let backend = AgentBackend(
             id: "codex",
             displayName: "Codex",
-            capabilities: ["streaming"],
+            capabilities: [.streaming],
             availability: .unavailable(reason: "not_logged_in")
         )
 

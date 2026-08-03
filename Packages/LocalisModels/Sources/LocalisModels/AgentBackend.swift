@@ -19,10 +19,10 @@ public struct AgentBackend: Identifiable, Codable, Hashable, Sendable {
     /// Human-facing label supplied by the bridge. UI must localize any text it
     /// adds around this; the label itself is the bridge's to name.
     public let displayName: String
-    /// Capabilities this backend advertises, e.g. `"tools"`, `"streaming"`,
-    /// `"resume"`. Open set on purpose — an unknown capability is ignored, not
-    /// a decoding failure, so the bridge can add one without an iOS release.
-    public let capabilities: Set<String>
+    /// Capabilities this backend advertises. Open set on purpose — an
+    /// unrecognised capability is kept, not a decoding failure, so the bridge
+    /// can add one without an iOS release (contract §2, constitution IV).
+    public let capabilities: Set<Capability>
     /// Whether the host can currently route to this backend (contract §2).
     ///
     /// A separate axis from `capabilities`: a signed-out backend still
@@ -34,7 +34,7 @@ public struct AgentBackend: Identifiable, Codable, Hashable, Sendable {
     public init(
         id: String,
         displayName: String,
-        capabilities: Set<String> = [],
+        capabilities: Set<Capability> = [],
         availability: BackendAvailability = .available
     ) {
         self.id = id
@@ -53,7 +53,7 @@ public struct AgentBackend: Identifiable, Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         displayName = try container.decode(String.self, forKey: .displayName)
-        capabilities = try container.decodeIfPresent(Set<String>.self, forKey: .capabilities) ?? []
+        capabilities = try container.decodeIfPresent(Set<Capability>.self, forKey: .capabilities) ?? []
         availability = try container.decodeIfPresent(
             BackendAvailability.self, forKey: .availability
         ) ?? .available
@@ -77,7 +77,7 @@ public struct AgentBackend: Identifiable, Codable, Hashable, Sendable {
     ///
     /// This is the only sanctioned way to branch on a backend. Feature checks
     /// ask what it *can do*, never what it *is*.
-    public func supports(_ capability: String) -> Bool {
+    public func supports(_ capability: Capability) -> Bool {
         capabilities.contains(capability)
     }
 
@@ -90,7 +90,7 @@ public struct AgentBackend: Identifiable, Codable, Hashable, Sendable {
     }
 
     /// Returns a copy advertising a different capability set.
-    public func withCapabilities(_ newCapabilities: Set<String>) -> AgentBackend {
+    public func withCapabilities(_ newCapabilities: Set<Capability>) -> AgentBackend {
         AgentBackend(
             id: id, displayName: displayName,
             capabilities: newCapabilities, availability: availability
