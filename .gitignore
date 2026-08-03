@@ -1,0 +1,9 @@
+.DS_Store
+.build/
+DerivedData/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+fastlane/report.xml
+fastlane/*.p8
+.env
+local/
