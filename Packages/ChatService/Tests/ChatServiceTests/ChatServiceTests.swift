@@ -48,6 +48,26 @@ private struct ScriptedTransport: AgentTransport {
     func probe(_ backend: AgentBackend) async -> Bool { true }
 }
 
+/// Records the request it was handed, so tests can assert on what this layer
+/// *sent* rather than only on what it did with the reply.
+///
+/// An actor because `AgentTransport` is `Sendable` and `send` is nonisolated —
+/// a `var` captured in a struct would be the mutable-state escape hatch strict
+/// concurrency exists to refuse.
+private actor RecordingTransport: AgentTransport {
+    private(set) var received: TurnRequest?
+
+    func send(_ request: TurnRequest) async throws -> TurnStream {
+        received = request
+        return TurnStream(
+            turnID: nil,
+            events: AsyncThrowingStream { $0.finish() }
+        )
+    }
+
+    func probe(_ backend: AgentBackend) async -> Bool { true }
+}
+
 /// Builds the `.turnEnd` frame a bridge sends when a turn dies (contract §3.1d).
 private func failedTurnEnd(
     seq: Int = 99,
@@ -971,5 +991,139 @@ struct ChatServiceTurnEndTests {
         let message = try #require(final.messages.last)
         #expect(message.text == "hi")
         #expect(message.status == .complete)
+    }
+}
+
+/// What this layer *sends*, as opposed to what it does with the reply.
+///
+/// These assertions exist because getting them wrong is silent. A malformed
+/// request does not throw; it produces an agent that answers oddly, which is
+/// the hardest class of bug to trace back to its cause.
+@Suite("ChatService sends a well-formed turn")
+struct ChatServiceRequestTests {
+    private static let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+    private static let hostID = HostID(
+        rawValue: UUID(uuidString: "00000000-0000-0000-0000-0000000000C1")!
+    )
+
+    private static func makeSession(messages: [Message]) -> Session {
+        Session(
+            id: UUID(),
+            hostID: hostID,
+            backendID: "test-backend",
+            title: "Test",
+            messages: messages,
+            createdAt: t0,
+            updatedAt: t0
+        )
+    }
+
+    private static func makeService(
+        _ transport: RecordingTransport,
+        _ session: Session
+    ) -> ChatService {
+        ChatService(
+            transport: transport,
+            repository: InMemorySessionRepository(sessions: [session]),
+            now: { t0 }
+        )
+    }
+
+    @Test("the whole transcript is sent, not just the new message")
+    func sendsFullHistory() async throws {
+        // The contract is ambiguous here: its body example shows a single
+        // message, while the same section describes `x-localis-session-id` as
+        // continuing a bridge-side session. Until that is settled we send
+        // everything, because the two readings fail very differently — a
+        // stateful bridge merely re-reads context it already had, while a
+        // stateless one handed only the new line forgets the conversation
+        // every turn and just answers strangely.
+        let earlier = [
+            Message(id: UUID(), role: .user, text: "first", createdAt: Self.t0),
+            Message(id: UUID(), role: .assistant, text: "reply", createdAt: Self.t0),
+        ]
+        let session = Self.makeSession(messages: earlier)
+        let transport = RecordingTransport()
+        let service = Self.makeService(transport, session)
+        let backend = AgentBackend(
+            id: "test-backend", displayName: "Test", capabilities: [.streaming]
+        )
+
+        let stream = try await service.send(prompt: "second", in: session, to: backend)
+        for try await _ in stream {}
+
+        let request = try #require(await transport.received)
+        #expect(request.messages.count == 3)
+        #expect(request.messages.map(\.text) == ["first", "reply", "second"])
+    }
+
+    @Test("the new user message is last, and it is the prompt")
+    func promptIsTheFinalMessage() async throws {
+        // The bridge answers the final message. Sending the prompt alongside a
+        // history that does not end with it — or ending on the assistant's
+        // last reply — asks the agent to answer the wrong turn.
+        let session = Self.makeSession(messages: [
+            Message(id: UUID(), role: .assistant, text: "earlier", createdAt: Self.t0)
+        ])
+        let transport = RecordingTransport()
+        let service = Self.makeService(transport, session)
+        let backend = AgentBackend(
+            id: "test-backend", displayName: "Test", capabilities: [.streaming]
+        )
+
+        let stream = try await service.send(prompt: "  ask me  ", in: session, to: backend)
+        for try await _ in stream {}
+
+        let request = try #require(await transport.received)
+        let last = try #require(request.messages.last)
+        #expect(last.role == .user)
+        // Trimmed, matching what was persisted — the bridge must not be sent
+        // one string while the transcript shows another.
+        #expect(last.text == "ask me")
+    }
+
+    @Test("the session id is carried so the bridge can continue the right turn")
+    func carriesSessionID() async throws {
+        // Contract §3 requires `x-localis-session-id`. Without it the bridge
+        // cannot tie this turn to the previous one.
+        let session = Self.makeSession(messages: [])
+        let transport = RecordingTransport()
+        let service = Self.makeService(transport, session)
+        let backend = AgentBackend(
+            id: "test-backend", displayName: "Test", capabilities: [.streaming]
+        )
+
+        let stream = try await service.send(prompt: "hi", in: session, to: backend)
+        for try await _ in stream {}
+
+        let request = try #require(await transport.received)
+        #expect(request.sessionID == session.id)
+        #expect(request.backendID == backend.id)
+    }
+
+    @Test("no workspace is sent, because this layer has none to send")
+    func workspaceIsAbsentNotInvented() async throws {
+        // FR-013 puts the working directory behind the backend's `workspace`
+        // capability — but `Session` has no field to hold one, so the picker
+        // and the stored path are unbuilt work, not something to synthesise
+        // here. `nil` omits the header entirely, which is the honest state;
+        // sending an empty one would assert "the workspace is the empty path".
+        //
+        // This test is a tripwire: when the field lands, it fails and whoever
+        // adds it has to decide deliberately what gets sent.
+        let session = Self.makeSession(messages: [])
+        let transport = RecordingTransport()
+        let service = Self.makeService(transport, session)
+        let backend = AgentBackend(
+            id: "test-backend",
+            displayName: "Test",
+            capabilities: [.streaming, .workspace]
+        )
+
+        let stream = try await service.send(prompt: "hi", in: session, to: backend)
+        for try await _ in stream {}
+
+        let request = try #require(await transport.received)
+        #expect(request.workspace == nil)
     }
 }

@@ -66,7 +66,20 @@ public actor ChatService {
             // The bridge wants the conversation ending with what to answer, not
             // a history and a prompt kept apart. `withUser` already has the new
             // turn appended, so this is that list exactly.
+            //
+            // Sending the whole transcript is the reading that fails loudly if
+            // it is the wrong one: a bridge that keeps its own session state
+            // just wastes tokens on the repeat, whereas under-sending to a
+            // stateless one makes the agent forget every turn — and that shows
+            // up as "the answers got strange", not as an error anyone can find.
             messages: withUser.messages
+            // `workspace` is deliberately left at its default. Not an oversight
+            // and not a decision made here: `Session` has no workspace field to
+            // send. FR-013 puts the directory behind the backend's `workspace`
+            // capability, so the picker, the stored path, and this argument are
+            // one piece of work that has not been done. Passing `nil` is the
+            // honest state — the header is then omitted entirely, which is not
+            // the same as sending an empty one.
         )
         let turn = try await transport.send(request)
 
