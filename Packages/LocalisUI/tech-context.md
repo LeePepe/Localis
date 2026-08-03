@@ -96,6 +96,14 @@ Sendability itself is *not* re-derived here — `ComposerState.make` reads
 `Session.canSend`. A second opinion would drift from the first, and then one of
 them is lying to the user.
 
+`canSend` and `blockedReason == nil` are one fact stated twice, and `ComposerView`
+relies on it: the notice bar is drawn on `blockedReason != nil` alone. Two tests
+hold the pairing — one that presence tracks sendability across every status, one
+that no reason is blank. The second matters because `blockedReason(for:)` keeps an
+unreachable `.idle` branch returning `""` rather than crashing, so the empty string
+is representable even though nothing produces it; rendered, it would be an icon
+beside nothing. Absence stays spelled `nil`.
+
 ## Layout constants live in `Layout`, temporarily
 
 `Layout` holds the three §7 numbers DesignKit does not yet own — reading measure

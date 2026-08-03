@@ -36,10 +36,7 @@ struct ComposerStateTests {
     func sendabilityMatchesDomain() {
         // `Session.canSend` is the single authority (Session.swift:66). If this
         // projection ever disagrees, one of the two is showing the user a lie.
-        let statuses: [SessionStatus] = [
-            .idle, .disconnected, .connecting, .streaming, .orphaned, .error(.unreachable)
-        ]
-        for status in statuses {
+        for status in Self.allStatuses {
             let session = Self.session(status)
             #expect(ComposerState.make(from: session).canSend == session.canSend, "\(status)")
         }
@@ -65,6 +62,43 @@ struct ComposerStateTests {
             let reason = ComposerState.make(from: Self.session(status)).blockedReason
             let text = try? #require(reason)
             #expect(text?.isEmpty == false, "\(status) blocked with no explanation")
+        }
+    }
+
+    /// Every status the composer can meet. Written out because `SessionStatus`
+    /// carries an associated value and so cannot be `CaseIterable`; a seventh
+    /// case added upstream will not appear here on its own, which is why the
+    /// tests below assert an *invariant* over the list rather than a table of
+    /// expected strings.
+    private static let allStatuses: [SessionStatus] = [
+        .idle, .disconnected, .connecting, .streaming, .orphaned, .error(.unreachable)
+    ]
+
+    @Test("a reason is present exactly when the composer is closed")
+    func reasonPresenceMatchesSendability() {
+        // The two fields are one fact stated twice, and `ComposerView` trusts
+        // that: it draws the notice bar on `blockedReason != nil` alone. A
+        // sendable session carrying a reason would explain a block that isn't
+        // happening; a blocked one carrying `nil` would refuse input silently,
+        // which is the exact failure FR-053 names.
+        for status in Self.allStatuses {
+            let state = ComposerState.make(from: Self.session(status))
+            #expect(state.canSend == (state.blockedReason == nil), "\(status)")
+        }
+    }
+
+    @Test("no reason is blank")
+    func noReasonIsBlank() {
+        // `blockedReason(for:)` has an unreachable `.idle` branch returning "",
+        // chosen over a crash so a future status change cannot take the composer
+        // down. The cost is that an empty string is representable — and the view
+        // would render it as an icon beside nothing at all. Emptiness must stay
+        // spelled `nil`, never "".
+        for status in Self.allStatuses {
+            guard let reason = ComposerState.make(from: Self.session(status)).blockedReason else {
+                continue
+            }
+            #expect(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false, "\(status)")
         }
     }
 
