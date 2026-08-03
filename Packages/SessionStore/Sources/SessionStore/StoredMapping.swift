@@ -112,6 +112,14 @@ enum StoredMapping {
 
     /// The machine a stored row describes.
     ///
+    /// **`pinnedSPKI` is always nil, and that is not a gap being papered over.**
+    /// This layer does not hold the pin — `HostCredentialStore` does — so the
+    /// only honest value here is "I do not know it". Reading a pin out of a
+    /// column would mean the table had one, which is the second trust anchor
+    /// `StoredHost` exists without. The host this returns therefore has
+    /// `canConnect == false` even when `pairingState == .paired`; the app's
+    /// composition point is what supplies the missing half.
+    ///
     /// Unknown `pairingState` / `kind` raw values fall back rather than throw,
     /// for the usual reason — but the two fallbacks are chosen differently.
     ///
@@ -127,7 +135,7 @@ enum StoredMapping {
             displayName: stored.displayName,
             endpoint: HostEndpoint(host: stored.endpointHost, port: stored.endpointPort),
             bridgeID: stored.bridgeID,
-            pinnedSPKI: stored.pinnedSPKIBase64.map(SPKIHash.init(base64:)),
+            pinnedSPKI: nil,
             pairingState: HostPairingState(rawValue: stored.pairingStateRaw) ?? .discovered,
             protocolVersion: stored.protocolVersion,
             kind: HostKind(rawValue: stored.kindRaw) ?? .other
@@ -242,6 +250,13 @@ enum StoredMapping {
         stored.toolCallsCompleted = failure?.toolCallsCompleted
     }
 
+    /// Builds the row for a host, dropping the pin it may be carrying.
+    ///
+    /// A caller with a fully-composed host — pin included — can hand it straight
+    /// to `save`, and the pin simply does not reach the table. That is
+    /// deliberate: the alternative is refusing such a host, which would make
+    /// "did this one come from the composition point?" something every call site
+    /// has to know.
     static func makeStored(_ host: LocalisHost) -> StoredHost {
         StoredHost(
             id: host.id.rawValue,
@@ -249,7 +264,6 @@ enum StoredMapping {
             endpointHost: host.endpoint.host,
             endpointPort: host.endpoint.port,
             bridgeID: host.bridgeID,
-            pinnedSPKIBase64: host.pinnedSPKI?.base64,
             pairingStateRaw: host.pairingState.rawValue,
             protocolVersion: host.protocolVersion,
             kindRaw: host.kind.rawValue
@@ -259,20 +273,19 @@ enum StoredMapping {
     /// Applies a host onto its stored row.
     ///
     /// Every field except `id` is writable, and that asymmetry is the point: the
-    /// id is fixed for life (FR-026) while the name, the address, the pin and
-    /// the pairing state are exactly what changes during normal use. A machine
-    /// that got a new DHCP lease is the same machine.
+    /// id is fixed for life (FR-026) while the name, the address and the pairing
+    /// state are exactly what changes during normal use. A machine that got a new
+    /// DHCP lease is the same machine.
     ///
-    /// `pinnedSPKIBase64` is assigned rather than merged, so `unpaired()` —
-    /// which clears the pin — actually clears the column. Keeping the old value
-    /// when the domain has none would leave a revoked host still carrying the
-    /// certificate it was told to forget (FR-027).
+    /// The pin is not among them — it has no column. Revoking a host still
+    /// removes its pin, just not here: `HostCredentialStore.removeCredentials(for:)`
+    /// owns that, and `pairingState` is what this table records about it
+    /// (FR-027).
     static func apply(_ host: LocalisHost, to stored: StoredHost) {
         stored.displayName = host.displayName
         stored.endpointHost = host.endpoint.host
         stored.endpointPort = host.endpoint.port
         stored.bridgeID = host.bridgeID
-        stored.pinnedSPKIBase64 = host.pinnedSPKI?.base64
         stored.pairingStateRaw = host.pairingState.rawValue
         stored.protocolVersion = host.protocolVersion
         stored.kindRaw = host.kind.rawValue

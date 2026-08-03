@@ -6,6 +6,34 @@ import Testing
 import LocalisModels
 import SwiftData
 
+/// Which `SessionRepository` a test is driving.
+///
+/// Exists so a property that must hold for *both* implementations is written
+/// once and parameterised, rather than written against whichever one was handy.
+/// The two sit behind a single protocol, so a behavioural difference between
+/// them is invisible to any test that only exercises one — and the in-memory
+/// one is what previews and UI tests run on.
+enum RepositoryKind: CustomStringConvertible {
+    case swiftData
+    case inMemory
+
+    func make() throws -> any SessionRepository {
+        switch self {
+        case .swiftData:
+            return SwiftDataSessionRepository(container: try SessionStoreContainer.inMemory())
+        case .inMemory:
+            return InMemorySessionRepository()
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .swiftData: return "SwiftDataSessionRepository"
+        case .inMemory: return "InMemorySessionRepository"
+        }
+    }
+}
+
 /// Persistence for the machines themselves.
 ///
 /// Until this table existed, `StoredSession.hostID` and `StoredBackend.hostID`
@@ -56,35 +84,65 @@ struct StoredHostTests {
 
     // MARK: - Round trip
 
-    @Test("a saved host comes back with every field it was saved with")
+    /// Every field this package owns survives a round trip.
+    ///
+    /// The expected value is built with `pinnedSPKI: nil` rather than compared
+    /// against the host that was saved: the pin is not this package's to keep
+    /// (see `storageHoldsNoSecondTrustAnchor`), so equality with the original
+    /// would be asserting the opposite of the design. Everything *else* must
+    /// match exactly, which is what makes this a round trip rather than a spot
+    /// check.
+    @Test("a saved host comes back with every field this layer owns")
     func savedHostRoundTrips() async throws {
         let repository = try Self.repository()
+        let fields: (endpoint: HostEndpoint, bridgeID: String?, protocolVersion: Int, kind: HostKind) = (
+            HostEndpoint(host: "192.168.1.20", port: 9443), "bridge-7", 3, .nas
+        )
         let saved = Self.host(
             id: Self.idA,
             name: "Studio",
-            endpoint: HostEndpoint(host: "192.168.1.20", port: 9443),
-            bridgeID: "bridge-7",
+            endpoint: fields.endpoint,
+            bridgeID: fields.bridgeID,
             pinnedSPKI: SPKIHash(base64: "c3BraQ=="),
             pairingState: .paired,
-            protocolVersion: 3,
-            kind: .nas
+            protocolVersion: fields.protocolVersion,
+            kind: fields.kind
         )
 
         try await repository.save(saved)
 
         let loaded = try #require(try await repository.host(id: Self.idA))
-        #expect(loaded == saved)
+        #expect(
+            loaded == Self.host(
+                id: Self.idA,
+                name: "Studio",
+                endpoint: fields.endpoint,
+                bridgeID: fields.bridgeID,
+                pinnedSPKI: nil,
+                pairingState: .paired,
+                protocolVersion: fields.protocolVersion,
+                kind: fields.kind
+            )
+        )
     }
 
-    /// The composite of the two fields that decide whether a connection may open.
+    /// Pairing state survives; connectability is deliberately **not** restored.
     ///
-    /// Asserted separately from field equality because this is the property the
-    /// rest of the app reads. A round trip that preserved every field but
-    /// reconstructed `canConnect` as `false` would still lock the user out of a
-    /// machine they paired, and equality on the struct is not what the connect
-    /// path calls.
-    @Test("a paired, pinned host is still connectable after a round trip")
-    func pairedHostStaysConnectable() async throws {
+    /// A host read straight from this package is always `pinnedSPKI == nil`, so
+    /// `canConnect` is false even for a machine the user really did pair. That
+    /// is the honest answer for a layer that does not hold the pin: the
+    /// Keychain does, and only the app's composition point can put the two
+    /// halves together.
+    ///
+    /// **This asymmetry is the dangerous part of the design, so it is asserted
+    /// rather than described.** `pairingState == .paired` with `canConnect ==
+    /// false` is a state the rest of the app must tolerate — core found the
+    /// same gap from the other side, where a view model computed
+    /// connectability from the state alone and no test could tell the
+    /// difference, because no fixture had ever produced this combination. This
+    /// is the fixture that produces it.
+    @Test("a restored host keeps its pairing state but is not connectable on its own")
+    func restoredHostKeepsPairingStateWithoutThePin() async throws {
         let repository = try Self.repository()
         try await repository.save(
             Self.host(id: Self.idA, name: "Studio")
@@ -92,16 +150,22 @@ struct StoredHostTests {
         )
 
         let loaded = try #require(try await repository.host(id: Self.idA))
-        #expect(loaded.canConnect)
+        #expect(loaded.pairingState == .paired)
+        #expect(loaded.pinnedSPKI == nil)
+        #expect(loaded.canConnect == false)
     }
 
-    /// Unpairing leaves no pin behind (FR-027), and storage must not put one back.
+    /// Unpairing must leave a `revoked` state behind, not a connectable one.
     ///
-    /// The dangerous direction is specific: a stored pin that outlived the
-    /// unpairing would come back as a `revoked` host that still carries the
-    /// certificate it was told to forget.
-    @Test("an unpaired host comes back with no pinned certificate")
-    func unpairedHostKeepsNoPin() async throws {
+    /// The pin is gone from every restored host regardless (this layer does not
+    /// store one), so the load-bearing assertion here is `pairingState`: a
+    /// revoked machine that came back `.paired` would be offered to the user as
+    /// something to connect to once the composition point supplied a pin —
+    /// except the Keychain's pin is gone too (`removeCredentials(for:)`), and
+    /// the two halves disagreeing is exactly the drift we removed the column to
+    /// prevent.
+    @Test("an unpaired host comes back revoked, not merely pinless")
+    func unpairedHostComesBackRevoked() async throws {
         let repository = try Self.repository()
         try await repository.save(
             Self.host(id: Self.idA, name: "Studio")
@@ -110,8 +174,8 @@ struct StoredHostTests {
         )
 
         let loaded = try #require(try await repository.host(id: Self.idA))
-        #expect(loaded.pinnedSPKI == nil)
         #expect(loaded.pairingState == .revoked)
+        #expect(loaded.pinnedSPKI == nil)
         #expect(loaded.canConnect == false)
     }
 
@@ -304,6 +368,57 @@ struct StoredHostTests {
         #expect(try await repository.host(id: .unattributed) == nil)
     }
 
+    // MARK: - Both implementations
+
+    /// **Neither implementation stores a pin**, and this runs against both.
+    ///
+    /// Added because a mutant survived: making `InMemorySessionRepository` keep
+    /// the pin changed nothing, since every other test in this suite drives the
+    /// SwiftData one. The two sit behind a single protocol, so a divergence is
+    /// invisible exactly where it does the most damage — a UI test or preview
+    /// built on the in-memory store would demonstrate `canConnect` surviving a
+    /// reload, which is false in the shipping app.
+    ///
+    /// Parameterised over both rather than duplicated, so a third implementation
+    /// cannot be added without deciding what it does here.
+    @Test(
+        "no implementation returns a pinned certificate",
+        arguments: [RepositoryKind.swiftData, .inMemory]
+    )
+    func noImplementationStoresThePin(kind: RepositoryKind) async throws {
+        let repository = try kind.make()
+        try await repository.save(
+            Self.host(id: Self.idA, name: "Studio")
+                .paired(pinning: SPKIHash(base64: "c3BraQ=="))
+        )
+
+        let loaded = try #require(try await repository.host(id: Self.idA))
+        #expect(loaded.pinnedSPKI == nil, "\(kind) handed back a pin")
+        #expect(loaded.pairingState == .paired, "\(kind) lost the pairing state")
+        #expect(loaded.canConnect == false, "\(kind) reported a connectable host")
+
+        let listed = try #require(try await repository.hosts().first)
+        #expect(listed.pinnedSPKI == nil, "\(kind) handed back a pin from hosts()")
+    }
+
+    /// A host seeded through the initializer is stripped like a saved one.
+    ///
+    /// The seed path is the one previews and UI tests actually use, so a pin
+    /// that survived construction would be a pin the app can never have.
+    @Test("a host seeded into the in-memory store arrives without its pin")
+    func seededHostLosesItsPin() async throws {
+        let repository = InMemorySessionRepository(
+            hosts: [
+                Self.host(id: Self.idA, name: "Studio")
+                    .paired(pinning: SPKIHash(base64: "c3BraQ==")),
+            ]
+        )
+
+        let loaded = try #require(try await repository.host(id: Self.idA))
+        #expect(loaded.pinnedSPKI == nil)
+        #expect(loaded.canConnect == false)
+    }
+
     // MARK: - Shape
 
     /// **No credential may become a stored column** (constitution I).
@@ -333,7 +448,6 @@ struct StoredHostTests {
                 "endpointHost",
                 "endpointPort",
                 "bridgeID",
-                "pinnedSPKIBase64",
                 "pairingStateRaw",
                 "protocolVersion",
                 "kindRaw",
@@ -348,21 +462,53 @@ struct StoredHostTests {
         )
     }
 
-    /// `pinnedSPKIBase64` is in that list on purpose, and it is not a secret.
+    /// **There is no second trust anchor.**
     ///
-    /// It is a hash of a *public* key, and it is the entire mechanism of
-    /// certificate pinning (FR-028). A future reader tidying up "the base64 blob
-    /// that looks like a credential" would turn pinning off while leaving every
-    /// other test green — so the reason it stays is written as an assertion.
-    @Test("the pinned certificate hash survives, because pinning depends on it")
-    func pinnedHashIsNotTreatedAsASecret() async throws {
-        let repository = try Self.repository()
-        let spki = SPKIHash(base64: "cGlubmVkLXNwa2k=")
-        try await repository.save(
-            Self.host(id: Self.idA, name: "Studio").paired(pinning: spki)
+    /// The pinned SPKI has exactly one owner — `HostCredentialStore`, in the
+    /// Keychain, keyed by host id — and this table is not it. Two copies of a
+    /// trust anchor drift, and the drifting one is what decides whether a
+    /// connection is allowed to open.
+    ///
+    /// Named for the proposition rather than for the implementation, on purpose.
+    /// "The pin is not in the table" describes today's code and reads as stale
+    /// the moment somebody adds it back "for convenience" — at which point the
+    /// tidy move is to delete the test. "There is no second trust anchor" is a
+    /// claim about the system, and adding the column makes it false.
+    ///
+    /// So this asserts two things that must stay true together: the column is
+    /// absent from the built schema, and a host saved *carrying* a pin does not
+    /// smuggle one into storage.
+    @Test("there is no second trust anchor: storage never holds a pinned certificate")
+    func storageHoldsNoSecondTrustAnchor() async throws {
+        let entity = try #require(
+            SessionStoreContainer.schema.entities.first { $0.name == "StoredHost" }
+        )
+        let pinLike = entity.properties.map(\.name).filter {
+            $0.localizedCaseInsensitiveContains("spki")
+                || $0.localizedCaseInsensitiveContains("pin")
+                || $0.localizedCaseInsensitiveContains("cert")
+        }
+        #expect(
+            pinLike.isEmpty,
+            """
+            \(pinLike) looks like a pinned certificate stored in the host table. \
+            The pin's owner is HostCredentialStore (Keychain, keyed by host id). \
+            A copy here becomes a second trust anchor, and the two will drift.
+            """
         )
 
-        #expect(try await repository.host(id: Self.idA)?.pinnedSPKI == spki)
+        // The domain type still carries a pin — this package simply does not
+        // write it. Saving one must therefore drop it, not persist it quietly
+        // under some other column.
+        let repository = try Self.repository()
+        try await repository.save(
+            Self.host(id: Self.idA, name: "Studio")
+                .paired(pinning: SPKIHash(base64: "cGlubmVkLXNwa2k="))
+        )
+
+        let loaded = try #require(try await repository.host(id: Self.idA))
+        #expect(loaded.pinnedSPKI == nil)
+        #expect(loaded.pairingState == .paired)
     }
 
     // MARK: - On disk
@@ -389,7 +535,11 @@ struct StoredHostTests {
         let loaded = try #require(try await reopened.host(id: Self.idA))
         #expect(loaded.displayName == "Studio")
         #expect(loaded.bridgeID == "bridge-7")
-        #expect(loaded.canConnect)
+        // Paired across a cold start — but not connectable from this layer
+        // alone, because the pin it needs is in the Keychain. See
+        // `restoredHostKeepsPairingStateWithoutThePin`.
+        #expect(loaded.pairingState == .paired)
+        #expect(loaded.canConnect == false)
     }
 
     /// Adding the host table must not cost an existing user their history.

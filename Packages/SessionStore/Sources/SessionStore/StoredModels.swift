@@ -151,9 +151,22 @@ final class StoredMessage {
 /// schema, so adding the field turns a test red rather than merely contradicting
 /// a comment.
 ///
-/// `pinnedSPKIBase64` is stored and is *not* a secret: it is a hash of a public
-/// key, and it is the whole of certificate pinning (FR-028). Dropping it would
-/// silently turn pinning off.
+/// `pinnedSPKI` is **deliberately not a column**, and this is the one thing in
+/// here most likely to look like an omission.
+///
+/// The pin has exactly one owner: `HostCredentialStore`, in the Keychain, keyed
+/// by host id. It is not omitted here because it is a secret — it is a hash of a
+/// public key — but because a *second* copy of a trust anchor drifts from the
+/// first, and the drifting copy is what decides whether a connection may open.
+///
+/// The consequence is deliberate and has to be understood before using this
+/// type: a `LocalisHost` read back from this package always has
+/// `pinnedSPKI == nil`, so `canConnect` is false **even for a machine the user
+/// really did pair**. Pairing state survives; connectability does not. Only the
+/// app's composition point, which can reach both this store and the Keychain,
+/// produces a host whose `canConnect` means anything.
+/// `StoredHostTests.storageHoldsNoSecondTrustAnchor` asserts the column's
+/// absence against the built schema.
 ///
 /// **Deliberately not related to `StoredSession` or `StoredBackend`.** Those two
 /// carry bare `UUID` host keys and keep doing so, for two reasons:
@@ -185,8 +198,6 @@ final class StoredHost {
     /// The bridge's self-reported instance id, when it sent one. Never an
     /// identity authority — `id` is.
     var bridgeID: String?
-    /// SHA-256 of the pinned certificate's SPKI, base64. Public-key material.
-    var pinnedSPKIBase64: String?
     /// Raw `HostPairingState` — a string, so a state written by a newer build
     /// degrades to a decode fallback instead of making the host unreadable.
     var pairingStateRaw: String = HostPairingState.discovered.rawValue
@@ -200,7 +211,6 @@ final class StoredHost {
         endpointHost: String,
         endpointPort: Int,
         bridgeID: String?,
-        pinnedSPKIBase64: String?,
         pairingStateRaw: String,
         protocolVersion: Int,
         kindRaw: String
@@ -210,7 +220,6 @@ final class StoredHost {
         self.endpointHost = endpointHost
         self.endpointPort = endpointPort
         self.bridgeID = bridgeID
-        self.pinnedSPKIBase64 = pinnedSPKIBase64
         self.pairingStateRaw = pairingStateRaw
         self.protocolVersion = protocolVersion
         self.kindRaw = kindRaw

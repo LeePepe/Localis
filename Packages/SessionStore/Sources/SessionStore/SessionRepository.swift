@@ -64,7 +64,31 @@ public actor InMemorySessionRepository: SessionRepository {
     ) {
         self.sessions = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         self.backends = backends
-        self.hosts = Dictionary(hosts.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        // Seeded hosts go through the same pin-stripping as saved ones. A seed
+        // that kept its pin would be a host this repository can return but the
+        // disk-backed one never can, and the preview or test built on it would
+        // be demonstrating connectivity the shipping app cannot reach.
+        self.hosts = Dictionary(
+            hosts.map { ($0.id, Self.withoutPin($0)) },
+            uniquingKeysWith: { _, last in last }
+        )
+    }
+
+    /// A copy with no pinned certificate.
+    ///
+    /// One helper for both the seed path and `save`, so the two cannot drift
+    /// into disagreeing about what this store holds.
+    private static func withoutPin(_ host: LocalisHost) -> LocalisHost {
+        LocalisHost(
+            id: host.id,
+            displayName: host.displayName,
+            endpoint: host.endpoint,
+            bridgeID: host.bridgeID,
+            pinnedSPKI: nil,
+            pairingState: host.pairingState,
+            protocolVersion: host.protocolVersion,
+            kind: host.kind
+        )
     }
 
     // MARK: - Sessions
@@ -146,11 +170,17 @@ public actor InMemorySessionRepository: SessionRepository {
     }
 
     /// Upsert, and the same refusal to store the "no machine" marker.
+    ///
+    /// The pin is dropped here exactly as the disk-backed store drops it, and
+    /// that parity is the reason this implementation exists. An in-memory store
+    /// that remembered pins would let a UI test prove `canConnect` after a
+    /// reload — a fact that is false in the shipping app, where the pin lives in
+    /// the Keychain and only the composition point can put the halves together.
     public func save(_ host: LocalisHost) async throws {
         guard !host.id.isUnattributed else {
             throw LocalisError.invalidInput(field: "hostID")
         }
-        hosts[host.id] = host
+        hosts[host.id] = Self.withoutPin(host)
     }
 
     /// Forgets the machine and leaves its sessions alone (FR-027, FR-036).
