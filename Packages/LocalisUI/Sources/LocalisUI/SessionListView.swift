@@ -38,6 +38,11 @@ public struct SessionRow: View {
 ///
 /// Takes already-projected rows so it can be previewed and screenshotted with
 /// no store, no transport, and no live agent.
+///
+/// Rows carry a `NavigationLink(value:)` rather than a destination: this layer
+/// knows a row can be opened, and nothing about what opening it shows. The
+/// caller supplies a `navigationDestination(for: UUID.self)`, which is what
+/// keeps the transcript's dependencies out of the list.
 public struct SessionListView: View {
     @Environment(\.theme) private var theme
     private let rows: [SessionRowState]
@@ -56,8 +61,10 @@ public struct SessionListView: View {
                 )
             } else {
                 List(rows) { row in
-                    SessionRow(state: row)
-                        .listRowBackground(theme.neutrals.card)
+                    NavigationLink(value: row.id) {
+                        SessionRow(state: row)
+                    }
+                    .listRowBackground(theme.neutrals.card)
                 }
                 .listStyle(.plain)
             }

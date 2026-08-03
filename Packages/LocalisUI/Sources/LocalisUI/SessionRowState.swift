@@ -31,12 +31,27 @@ public struct SessionRowState: Identifiable, Equatable, Sendable {
     /// Longest preview we render before eliding.
     public static let previewLimit = 80
 
-    /// Builds a row from a session and the backends currently configured.
+    /// Builds a row from a session and the backends its hosts advertise.
     ///
-    /// An unknown `backendID` (backend deleted while sessions remain) renders
-    /// as "Unknown agent" rather than crashing or hiding the row.
-    public static func make(from session: Session, backends: [AgentBackend]) -> SessionRowState {
-        let backend = backends.first { $0.id == session.backendID }
+    /// `backends` is keyed by `BackendRef` — `(hostID, backendID)` — not by
+    /// backend id, because a backend id is unique only within one machine
+    /// (FR-029). Two paired machines both exposing `claude` are two different
+    /// backends, and a lookup by id alone returns whichever was found first.
+    ///
+    /// Not hypothetical: this took `[AgentBackend]` and matched on
+    /// `$0.id == session.backendID`, and the first screenshot of the assembled
+    /// app showed a laptop session wearing the studio machine's backend name.
+    /// The fix is the parameter type rather than the comparison — with a
+    /// `BackendRef` key, the host-blind lookup is not something this function
+    /// can express any more.
+    ///
+    /// An absent ref (backend deleted, or the host unpaired while its sessions
+    /// remain) renders as "Unknown agent" rather than crashing or hiding the row.
+    public static func make(
+        from session: Session,
+        backends: [BackendRef: AgentBackend]
+    ) -> SessionRowState {
+        let backend = backends[session.backendRef]
         return SessionRowState(
             id: session.id,
             title: session.title,
