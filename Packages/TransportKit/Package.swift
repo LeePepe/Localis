@@ -19,6 +19,7 @@ let package = Package(
         .testTarget(
             name: "TransportKitTests",
             dependencies: ["TransportKit"],
+            resources: [.copy("Fixtures")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         )
     ]

@@ -1,0 +1,33 @@
+event: x-localis-session-status
+data: {"seq":1,"session_id":"s-1","status":"thinking"}
+
+data: {"id":"c-1","object":"chat.completion.chunk","seq":2,"choices":[{"delta":{"content":"He"},"index":0}]}
+
+data: {"id":"c-1","object":"chat.completion.chunk","seq":3,"choices":[{"delta":{"content":"llo"},"index":0}]}
+
+event: x-localis-tool-call
+data: {"seq":4,"session_id":"s-1","call_id":"c-7","phase":"start","tool":"Bash","summary":"git status","started_at":"2026-08-03T09:00:00Z"}
+
+: keep-alive
+
+event: x-localis-tool-call
+data: {"seq":5,"session_id":"s-1","call_id":"c-7","phase":"end","tool":"Bash","outcome":"ok","duration_ms":840}
+
+event: x-localis-invented-later
+data: {"seq":6,"anything":"at all"}
+
+event: x-localis-telemetry
+data: {"seq":7,"session_id":"s-1","context_used":0.42,"queue_depth":2,"model":"claude-opus-4","invented_later":"ignored"}
+
+event: x-localis-approval-required
+data: {"seq":8,"session_id":"s-1","approval_id":"a-123","tool":"Write","summary":"write foo.swift"}
+
+data: {"id":"c-1","object":"chat.completion.chunk","seq":9,"choices":[{"delta":{},"finish_reason":"stop","index":0}]}
+
+data: {"seq":10,"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":1200,"completion_tokens":340,"total_tokens":1540}}
+
+event: x-localis-turn-end
+data: {"seq":11,"session_id":"s-1","turn_id":"t-9","outcome":"completed","tool_calls_completed":1}
+
+data: [DONE]
+

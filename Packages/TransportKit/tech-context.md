@@ -11,9 +11,9 @@ red_lines:
   - Parsers are pure value types (`SSEParser`), testable with no socket. Do not hide parsing inside a URLSession delegate.
   - Swift 6 strict concurrency; `AgentTransport` conformers must be genuinely `Sendable`.
 roles:
-  Types: [AgentTransport, SSEParser, EndpointValidator]
+  Types: [AgentTransport, SSEParser, EndpointValidator, StreamEvent, StreamEventMapper, BackendCatalog, SkillCatalog, SPKIPinning, HostCredentialStore, BridgeDiscovery]
 test: swift test --package-path Packages/TransportKit
-owns: [AgentTransport, TransportRequest, TransportEvent, SSEParser, EndpointValidator]
+owns: [AgentTransport, TransportRequest, TransportEvent, SSEParser, EndpointValidator, StreamEvent, SequencedEvent, StreamEventMapper, BackendCatalog, BackendListing, HostCapabilities, SkillCatalog, SPKIPinning, HostCredentialStore, KeychainError, BridgeDiscovery, DiscoveredHost]
 ---
 
 # TransportKit Context
@@ -50,6 +50,30 @@ Comment lines (`:` in column 0) are SSE keep-alives and yield no frame.
 
 ## Endpoint validation
 
-Local agents commonly run plain HTTP on the LAN, so `http` is allowed alongside
-`https`. Everything else — no host, unknown scheme, out-of-range port — is
+**HTTPS only.** `EndpointValidator.allowedSchemes` is `["https"]` and there is no
+plaintext fallback, LAN included (constitution principle V) — conversations carry
+source code and filesystem paths, and "it's only my home network" is not a threat
+model. Self-signed certificates are what make this practical without a public CA:
+`SPKIPinning` records the SubjectPublicKeyInfo hash at pairing and checks it on
+every connection afterwards.
+
+Everything else — no host, unknown scheme, out-of-range port — is
 `LocalisError.invalidInput(field: "endpoint")`.
+
+`ArchitectureTests` sweeps this package's own sources for `http://` so the rule
+cannot be reintroduced quietly.
+
+## Per-host, never multi-host
+
+Everything here is built for **one** host: one token, one pinned SPKI, one
+negotiated protocol version, one backend list, one skill catalog. Amendment A's
+multi-host orchestration lives above this layer.
+
+`BridgeDiscovery` is the single exception, and only just — it *emits* hosts one
+at a time and keeps no collection, no registry and no "current host". Whether a
+sighting is a machine already on file is decided by `HostRecognition` in
+LocalisModels, not reimplemented here: the pinned certificate is the authority
+and Bonjour's `hid=` only relocates a machine whose SPKI already matches.
+
+`HostCredentialStore` keys every entry by `HostID`, so a host-blind lookup is not
+something to remember not to write — there is no way to express it.

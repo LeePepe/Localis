@@ -1,0 +1,42 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "to-spec",
+      "name": "To Spec",
+      "summary": "Turn a conversation into a publishable spec",
+      "backends": ["alpha", "beta"],
+      "parameters": [
+        { "name": "topic", "label": "Topic", "kind": "text", "required": true },
+        { "name": "depth", "label": "Depth", "kind": "enum", "required": false,
+          "options": ["quick", "thorough"], "default": "thorough" }
+      ],
+      "template": "Use the to-spec skill on: {{topic}}\n\nDepth: {{depth}}"
+    },
+    {
+      "id": "missing-template",
+      "name": "Broken One",
+      "summary": "No template field at all"
+    },
+    {
+      "name": "No Id",
+      "template": "orphaned template"
+    },
+    {
+      "id": "tdd",
+      "name": "TDD",
+      "template": "Write a failing test for {{behaviour}} first.",
+      "invented_later": { "nested": true }
+    },
+    {
+      "id": "  ",
+      "name": "Blank Id",
+      "template": "blank id should be rejected"
+    },
+    {
+      "id": "no-summary",
+      "name": "No Summary",
+      "template": "summary is optional"
+    }
+  ]
+}

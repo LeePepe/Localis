@@ -1,0 +1,49 @@
+{
+  "object": "list",
+  "x_localis": {
+    "resumable_turns": true,
+    "retention_seconds": 600,
+    "max_buffer_bytes": 4194304,
+    "telemetry": ["usage", "activity", "tool_calls", "invented_later"],
+    "unknown_host_field": "ignored"
+  },
+  "data": [
+    {
+      "id": "alpha",
+      "object": "model",
+      "owned_by": "localis",
+      "x_localis": {
+        "display_name": "Alpha Agent",
+        "capabilities": ["streaming", "tools", "skills", "workspace"],
+        "available": true
+      }
+    },
+    {
+      "id": "beta",
+      "object": "model",
+      "owned_by": "localis",
+      "x_localis": {
+        "display_name": "Beta Agent",
+        "capabilities": ["streaming", "requires_network", "invented_later"],
+        "available": true,
+        "unknown_model_field": 42
+      }
+    },
+    {
+      "id": "gamma",
+      "object": "model",
+      "owned_by": "localis",
+      "x_localis": {
+        "display_name": "Gamma Agent",
+        "capabilities": ["streaming", "tools", "workspace"],
+        "available": false,
+        "unavailable_reason": "not_logged_in"
+      }
+    },
+    {
+      "id": "delta",
+      "object": "model",
+      "owned_by": "localis"
+    }
+  ]
+}

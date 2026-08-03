@@ -1,0 +1,8 @@
+event: x-localis-tool-call
+data: {"seq":12,"session_id":"s-1","call_id":"c-8","phase":"start","tool":"Bash","summary":"swift test"}
+
+data: {"id":"c-2","object":"chat.completion.chunk","seq":13,"choices":[{"delta":{"content":"partial"},"index":0}]}
+
+event: x-localis-turn-end
+data: {"seq":14,"session_id":"s-1","turn_id":"t-10","outcome":"failed","failed_at_ms":480000,"tool_calls_completed":3,"error":{"code":"backend_unavailable","message":"/Users/tian/secret/path exploded"}}
+
