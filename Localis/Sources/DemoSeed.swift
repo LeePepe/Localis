@@ -52,6 +52,9 @@ enum DemoSeed {
     static func populateIfEmpty(_ repository: any SessionRepository) async {
         do {
             guard try await repository.allSessions().isEmpty else { return }
+            for host in hostFixtures() {
+                try await repository.save(host)
+            }
             for (host, backend, session) in fixtures() {
                 try await repository.save(backend, on: host)
                 try await repository.create(session)
@@ -61,6 +64,36 @@ enum DemoSeed {
             // leaves the app on its real empty state — which is a true thing to
             // show — whereas crashing would lose the very screen we came for.
         }
+    }
+
+    /// Two machines in different pairing states.
+    ///
+    /// Written through `save(_ host:)` like everything else here, so the
+    /// screenshot shows hosts that genuinely came back off disk through
+    /// `hosts()`. Handing `RootView` a hardcoded array would photograph the
+    /// strip rather than the persistence, and persistence is the whole of B-1.
+    ///
+    /// The two states are chosen to make a wrong projection visible: one paired
+    /// and pinned, one merely discovered. A single paired fixture would look
+    /// identical whether or not `canConnect` was consulted — which is exactly
+    /// the mutation that survived the first run of the harness.
+    private static func hostFixtures() -> [LocalisHost] {
+        [
+            LocalisHost(
+                id: HostID(),
+                displayName: "Studio",
+                endpoint: HostEndpoint(host: "studio.local", port: 8443),
+                bridgeID: "bridge-studio",
+                pinnedSPKI: SPKIHash(base64: "AAA="),
+                pairingState: .paired
+            ),
+            LocalisHost(
+                id: HostID(),
+                displayName: "MacBook Air",
+                endpoint: HostEndpoint(host: "air.local", port: 8443),
+                bridgeID: "bridge-air"
+            )
+        ]
     }
 
     /// Two hosts whose backends share the id `claude`.
