@@ -1127,3 +1127,55 @@ struct ChatServiceRequestTests {
         #expect(request.workspace == nil)
     }
 }
+
+/// The projection LocalisUI now asserts against rather than restates.
+///
+/// These are quantified over `MessageStatus.allCases` rather than written as a
+/// list of the statuses that exist today. A seventh status is exactly the change
+/// that would slip through a hand-written list: it compiles, every existing test
+/// stays green, and the new state silently picks up whichever branch the
+/// `isInFlight` ternary happens to send it down.
+@Suite("ChatService projects settled status for the UI")
+struct ChatServiceProjectionTests {
+    @Test("every in-flight status reads as disconnected, not as an error")
+    func inFlightIsDisconnected() {
+        // The claim `.disconnected` makes is "the link is gone, the work may
+        // still be running" — which is why the composer offers to keep reading
+        // instead of announcing the reply is lost. Any status where the turn
+        // might still be alive has to land here, not just `.detached`.
+        for status in MessageStatus.allCases where status.isInFlight {
+            #expect(
+                ChatService.sessionStatus(for: status, reason: .connectionLost) == .disconnected,
+                "\(status) is in flight, so it must not surface as an error"
+            )
+        }
+    }
+
+    @Test("every settled status carries the reason it settled")
+    func settledCarriesReason() {
+        // The other half. A settled turn has a cause the user can act on, and
+        // dropping it leaves them with a bare "Error" — a revoked token and a
+        // dropped connection need different things from them.
+        for status in MessageStatus.allCases where !status.isInFlight {
+            #expect(
+                ChatService.sessionStatus(for: status, reason: .tokenRevoked)
+                    == .error(.tokenRevoked),
+                "\(status) is settled, so its reason must survive"
+            )
+        }
+    }
+
+    @Test("no status is both in-flight and settled")
+    func theSplitIsTotal() {
+        // Guards the assumption the two tests above share: that `isInFlight`
+        // partitions the statuses. If a future status answered neither, both
+        // loops would skip it and both would still pass — the failure mode
+        // quantified tests are supposed to remove, reintroduced by accident.
+        let inFlight = MessageStatus.allCases.filter(\.isInFlight)
+        let settled = MessageStatus.allCases.filter { !$0.isInFlight }
+
+        #expect(inFlight.count + settled.count == MessageStatus.allCases.count)
+        #expect(!inFlight.isEmpty)
+        #expect(!settled.isEmpty)
+    }
+}
