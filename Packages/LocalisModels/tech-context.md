@@ -12,9 +12,9 @@ red_lines:
   - `HostRuntimeState` is deliberately not `Codable` — reachability and latency are derived, never persisted.
   - The bridge's own `error.message` is never carried into `LocalisError` — it may contain absolute paths. UI text is derived locally from the code.
 roles:
-  Types: [LocalisHost, HostRuntimeState, HostRecognition, AgentBackend, Capability, BackendRef, Message, Session, TurnCursor, TurnFailure, SkillDescriptor, LocalisError]
+  Types: [LocalisHost, HostRuntimeState, HostRecognition, AgentBackend, Capability, BackendRef, Message, Session, StreamEvent, TurnCursor, TurnFailure, SkillDescriptor, LocalisError]
 test: swift test --package-path Packages/LocalisModels
-owns: [LocalisHost, HostID, HostEndpoint, SPKIHash, HostPairingState, HostKind, HostRuntimeState, HostReachability, HostUnreachableReason, HostRecognition, AgentBackend, BackendAvailability, Capability, BackendRef, Message, MessageRole, MessageStatus, Session, SessionStatus, TurnCursor, TurnFailure, SkillDescriptor, LocalisError]
+owns: [LocalisHost, HostID, HostEndpoint, SPKIHash, HostPairingState, HostKind, HostRuntimeState, HostReachability, HostUnreachableReason, HostRecognition, AgentBackend, BackendAvailability, Capability, BackendRef, Message, MessageRole, MessageStatus, Session, SessionStatus, StreamEvent, SequencedEvent, ToolCall, ApprovalRequest, TelemetryValue, TokenUsage, TurnEnd, TurnCursor, TurnFailure, SkillDescriptor, LocalisError]
 ---
 
 # LocalisModels Context
@@ -36,6 +36,7 @@ asymmetry is deliberate — it is what keeps the dependency graph acyclic.
 | `BackendRef` | The composite key `(hostID, backendID)` that names a backend across hosts (FR-029) |
 | `Message` | One turn: role, text, timestamp, delivery status |
 | `Session` | A conversation bound to one host; holds the transcript |
+| `StreamEvent` | The only stream vocabulary that leaves TransportKit — wire shapes stay internal |
 | `TurnCursor` | Resume cursor `(turnID, lastSeq)` for an in-flight turn (Amendment C) |
 | `TurnFailure` | How far a turn got before it died — `failedAtMs`, `toolCallsCompleted` |
 | `SkillDescriptor` | A prompt template the input bar can insert (Amendment B) |
