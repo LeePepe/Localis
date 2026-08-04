@@ -752,6 +752,25 @@ The rules that come out of this, in order of how often they save us:
     package sweep was this too: not a run that printed nothing, but a package
     that never compiled. Declining to count it as a pass was right; not
     investigating it let the same cause run loose for hours.
+27. **A test can go vacuous because the world moved, and it keeps its name.**
+    A privacy test seeded an error with a fake path and hostname, then asserted
+    the rendered output contained neither. A later change routed that error
+    code to a case carrying **no payload at all** — so all five "must not
+    appear" assertions held for the reason that nothing was there to appear in.
+    Still green, still called *nothing but domain and code rides out*, and now
+    guarding nothing.
+
+    The tell was mundane: a change that should have affected it, and it stayed
+    green. **"I changed the world under this test and it did not notice" is the
+    strongest signal available that it was never watching.** Follow it before
+    concluding the change was safe.
+
+    Repairing the input only fixes today. Add the precondition that would have
+    caught it — `try #require(error.diagnostic != nil)` in front of the
+    assertions — so the next time the routing moves, the test **fails** rather
+    than quietly passing on an empty subject. Negative assertions need this
+    most: an assertion that something is absent is satisfied by an absent
+    universe.
 
 ## Hooks
 
@@ -802,6 +821,12 @@ testflight → Run workflow with `force=true`.
   the TransportKit boundary and carries a `userMessage`.
 - **Conventional commits** (`feat:`, `fix:`, `refactor:`, `chore:` …), no AI
   attribution.
+- **Stage by naming files, not `git add -A`.** Probes, mutants and misplaced
+  copies live in the working tree during any serious investigation, and `-A`
+  sweeps them into the commit. One stray file this week was a duplicate of a
+  real source file left by a mis-targeted `cp` — reviewed casually, it reads as
+  deliberate. Naming each path costs a few seconds and makes "what is in this
+  commit" a decision rather than a side effect.
 - **Never write a task number as `(#NN)` in a commit subject — write `task
   #NN`.** Task numbers come from the local task list; GitHub has never heard of
   them, and issues and pull requests share one numbering space there. A subject
