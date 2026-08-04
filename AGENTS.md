@@ -332,6 +332,16 @@ The rules that come out of this, in order of how often they save us:
    and all read like properties of *(object)*. Cite refs, not line numbers.
 5. **Say what you verified and what you did not.** "No issues found" and "not
    checked" look identical downstream, and the first one ends the investigation.
+
+   And when a result you already reported turns out to be empty, **retract it
+   quickly rather than carefully**. Someone reported a lint run clean, later
+   found the tool had been excluded from that directory, and withdrew it at
+   once — noting that the cost of retracting is one person's credibility, while
+   the cost of leaving it is a merge decision made on a reading of nothing. The
+   asymmetry is what decides, not the awkwardness.
+
+   Praising the courage of an admission gets this backwards. Withdrawing a bad
+   reading is an engineering act with a measurable downstream effect.
 6. **Carry the premise with the conclusion.** "X shouldn't be deleted" and "X
    shouldn't be deleted, and I have not looked at whether anyone is deleting it"
    lead to different actions. Second-hand advice arrives stripped of its
@@ -790,6 +800,24 @@ The rules that come out of this, in order of how often they save us:
     the rule with a wrong one left all seven green. When adding a rule, count
     the assertions on each side — a property with no positive case is a
     property that can be broken in one direction silently.
+29. **Two branches that are each green have never met.** Two halves of one
+    feature, developed in parallel, both passed CI — and the second branch was
+    three commits behind the merge that added the first, so **the two halves
+    had never been compiled in the same tree.** Rebasing first is not a
+    formality: if they conflict, that conflict belongs on the branch, where it
+    is one person's problem, rather than on `main`, where it looks like the
+    merge broke something.
+
+    This is #32's shape moved earlier in time — two sides individually correct,
+    the seam between them never exercised — and it is cheaper here, because the
+    compiler will say so within a minute.
+
+    The same day this rule was written, checking a teammate's claim from a
+    working tree **sixteen commits behind `main`** produced zero hits for a
+    symbol that had three, and the reply "I can't see those call sites" was one
+    step away. `git log HEAD..origin/main --oneline | wc -l` costs nothing.
+    Everyone here has now been asked to run it; the person writing this had not
+    run it on themselves.
 
 ## Hooks
 
