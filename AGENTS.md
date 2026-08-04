@@ -510,6 +510,23 @@ The rules that come out of this, in order of how often they save us:
     already red can only advise, or people learn to bypass the hook wholesale —
     and bypassing takes every other check in it down as well.
 
+    **Order is the other half of location: a failing gate hides every gate
+    behind it.** One `gitleaks` hit — on a deliberately fake token, in a branch
+    nobody had merged — failed step 4 of the `Lint & policy` job, and steps 5
+    through 9 came back `skipped`: SwiftLint, the frontmatter anti-rot check,
+    the wiring self-test, the app-target import check. Five PRs sat red for an
+    hour reading "lint failed," and during that hour **nothing was linted at
+    all**. Not one of those five checks could have reported a problem, and the
+    red looked like it was doing its job.
+
+    So when a job fails, read the *step* conclusions, not the job's: `gh api
+    repos/OWNER/REPO/actions/jobs/<id> --jq '[.steps[] | {name, conclusion}]'`.
+    A wall of `skipped` after one `failure` means the answer you have is about
+    one check and the silence is about all the others. And when ordering steps
+    within a job, put the cheap, rarely-tripped ones last — they are the ones
+    you can afford to lose, and everything after a fragile step is something
+    you have chosen to stop running whenever that step is unhappy.
+
 ## Hooks
 
 ```bash
