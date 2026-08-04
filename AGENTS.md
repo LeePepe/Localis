@@ -145,8 +145,24 @@ Instances we actually hit, so you can recognise the family:
 | `** TEST FAILED **` *and* exit 0, no test names | A stale `.xcodeproj` left a file out of the target; compilation failed and nothing ran |
 | 538 green tests over a pinned transport | Every one used a fake HTTP client; real TLS had never run, and the pinning delegate was never called on the streaming path |
 | A timely `429 pairing_session_expired` | It was the *consequence* of the previous probe consuming the one-shot code, not the cause of the failure being investigated |
+| Nine references to an error case | All nine were on the receiving side; nothing in production ever throws it, so the handling has never once run |
+| A comment explaining a mechanism | It was wrong, had been copied into another layer, and the copy did not move when the original was fixed |
 
-Those last two are worth separating, because they fail in opposite directions.
+Those last two are the "half a wire" family, and this project has now found
+four instances in two days: `TokenStore.revoke` with no caller,
+`certificatePinMismatch` with no throw site, `HostRuntimeState` with no
+production consumer, and `token_revoked` with no emitter. Every one was written
+carefully, tested thoroughly, and connected to nothing. The reason they survive
+is that **each half is individually defensible** — a reviewer looking at the
+receiving code sees correct, well-tested handling, because it is.
+
+So the judgement is never "does this look implemented" but two separate
+questions: **does production code ever produce this value, and does anything
+read it and act.** A reference count answers neither. Nine hits on
+`certificatePinMismatch` read exactly like a case in active use; all nine were
+consumers.
+
+Those two before them fail in opposite directions.
 
 The first is the most expensive shape this project has produced: **both sides
 green, the seam between them never executed.** Every unit test on the transport
@@ -275,6 +291,20 @@ The rules that come out of this, in order of how often they save us:
     something true" but "**does a reader who trusts this end up in the right
     file**". A true message that indicts the wrong component is worse than a
     vague one, because it is actionable.
+15. **A wrong comment gets quoted, and the quote does not follow the fix.** Of
+    everything here, a comment is the only artifact that can be *disproved and
+    still sit there unchanged* — code that is wrong goes red, a test that is
+    wrong goes red, a comment that is wrong does nothing at all. Worse, it
+    propagates: the false causal claim about `bytes(for:)` was copied out of
+    `HTTPStreaming.swift` into another layer's file, and fixing the original
+    left the copy behind, now indistinguishable from an independent
+    observation. Two people had already reasoned from it.
+
+    So when you correct an explanation, grep for its distinctive phrasing
+    across the repo before closing the task — and prefer comments that state
+    what was measured ("arm B: removing the argument alone changed nothing")
+    over comments that state a mechanism, because a measurement carries its own
+    provenance and a mechanism does not.
 
 ## Hooks
 
