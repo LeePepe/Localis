@@ -30,10 +30,35 @@ final class HostListModel {
     /// go to the repository directly: adding a machine creates a record, and
     /// records are the store's business.
     private let assembly: HostAssembly
+    /// Asks each machine whether it is answering. See `HostProbing` for why the
+    /// app layer has its own shape for this, and for the two-transport split
+    /// that is live while milestone B is in progress.
+    private let probing: any HostProbing
+    /// The machines behind the rows, kept so a probe result can be re-projected.
+    ///
+    /// `HostRowState` is a projection — strings and booleans — and cannot be
+    /// reversed into the `LocalisHost` it came from. Applying a probe result
+    /// means building the row again from both halves, so the host half has to
+    /// still be here. Keyed by id rather than held as a parallel array: rows can
+    /// be removed while a probe is in flight, and an index would then name a
+    /// different machine.
+    private var hostsByID: [HostID: LocalisHost] = [:]
+    /// The in-flight probe pass, so a test can wait for it rather than race it.
+    ///
+    /// Deliberately not awaited by `load()`: rows must reach the screen before
+    /// any machine answers, or the list stays empty for as long as the slowest
+    /// unreachable Mac takes to time out — and an empty list reads as "you have
+    /// no machines".
+    private var probeTask: Task<Void, Never>?
 
-    init(repository: any SessionRepository, credentials: any PinReading = HostCredentialStore()) {
+    init(
+        repository: any SessionRepository,
+        credentials: any PinReading = HostCredentialStore(),
+        probing: any HostProbing = BridgeHostProbe()
+    ) {
         self.repository = repository
         self.assembly = HostAssembly(repository: repository, credentials: credentials)
+        self.probing = probing
     }
 
     /// Reads every machine on file.
@@ -49,10 +74,17 @@ final class HostListModel {
             // failure is a type-inference error at the call site rather than
             // anything that mentions the new parameter.
             //
-            // No runtime value is passed: nothing has probed these hosts, and
-            // the default says so (#41 supplies the live one).
-            rows = try await assembly.hosts().map { HostRowState(host: $0) }
+            // No runtime value is passed here: nothing has probed these machines
+            // *yet*, and the default says so. `probe` supplies the live one as a
+            // second pass — for the paired machines. A `.discovered` machine is
+            // never asked and keeps this `.unknown` for good, which is correct
+            // rather than a gap: nothing has been established about whether it
+            // answers, and `.unknown` is exactly that claim. See `probe`.
+            let hosts = try await assembly.hosts()
+            rows = hosts.map { HostRowState(host: $0) }
+            hostsByID = Dictionary(hosts.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
             loadError = nil
+            probe(hosts)
         } catch {
             // Never an empty list on failure. "You have no Macs" and "we could
             // not read your Macs" are different sentences, and showing the
@@ -61,7 +93,86 @@ final class HostListModel {
             loadError = (error as? LocalisError)?.userMessage
                 ?? "Your machines couldn't be loaded. Please try again."
             rows = []
+            // Cleared with the rows, not left behind. A stale entry here would
+            // let a probe from the previous pass land on a list that has since
+            // failed to load — `apply` looks rows up by id, and the id would
+            // still match.
+            hostsByID = [:]
+            probeTask?.cancel()
+            probeTask = nil
         }
+    }
+
+    /// Asks each paired machine whether it is answering, and updates its row.
+    ///
+    /// **Only `.paired` machines are asked, and the reason is not efficiency.**
+    /// A machine that was never paired has no token in the Keychain, and
+    /// `BridgeClient` refuses an unauthenticated request with
+    /// `LocalisError.unauthorized` — which `HostReachability(failure:)` maps to
+    /// `.unauthorized`, whose sentence is "This Mac no longer accepts this
+    /// device." Measured, not inferred: `HostCredentialStore.token(for:)`
+    /// returns nil rather than throwing, so the refusal happens at
+    /// `BridgeClient.request` and arrives here indistinguishable from a machine
+    /// that revoked us.
+    ///
+    /// That sentence is false about a `.discovered` machine — it never accepted
+    /// this device — and it points the user at the wrong thing while sounding
+    /// specific. Its row already says "Not paired", which is both true and the
+    /// action to take, so nothing is being hidden by staying quiet here.
+    ///
+    /// The same `.paired` gate guards the Keychain read in `HostAssembly.joined`,
+    /// for a related reason: state below `.paired` means there is no credential
+    /// to use, and reaching for one anyway produces a confident wrong answer.
+    private func probe(_ hosts: [LocalisHost]) {
+        probeTask?.cancel()
+        let pairedHosts = hosts.filter { $0.pairingState == .paired }
+        guard !pairedHosts.isEmpty else {
+            probeTask = nil
+            return
+        }
+
+        probeTask = Task { [probing] in
+            // A task group, so one machine that takes the full timeout does not
+            // hold up the answer from a machine next to it (FR-034). Each result
+            // is applied as it lands rather than at the end, for the same reason
+            // rows are published before any probe finishes.
+            await withTaskGroup(of: (HostID, HostReachability).self) { group in
+                for host in pairedHosts {
+                    group.addTask { (host.id, await probing.reachability(of: host)) }
+                }
+                for await (id, reachability) in group {
+                    self.apply(reachability, to: id)
+                }
+            }
+        }
+    }
+
+    /// Writes one probe result into its row.
+    ///
+    /// Rebuilds the row from the same initialiser rather than assigning to
+    /// `runtime`: `isConnectable` is derived from both halves, and setting one
+    /// field would leave a row claiming it can connect to a machine that just
+    /// refused. `HostRowState` is a value, so this is a replacement, not a
+    /// mutation.
+    ///
+    /// A row that has since disappeared — the user removed the machine, or the
+    /// list failed to reload, while a probe was in flight — is simply not found,
+    /// and the answer is dropped.
+    private func apply(_ reachability: HostReachability, to id: HostID) {
+        guard let host = hostsByID[id],
+              let index = rows.firstIndex(where: { $0.id == id }) else { return }
+        rows[index] = HostRowState(
+            host: host,
+            runtime: HostRuntimeState(reachability: reachability)
+        )
+    }
+
+    /// Waits for the current probe pass. Test support: the probes run in a
+    /// detached task, and an assertion made straight after `load()` would race
+    /// them — which is exactly the window `rowsAppearBeforeProbesComplete` is
+    /// about, so it must be possible to be on either side of it deliberately.
+    func probesFinished() async {
+        await probeTask?.value
     }
 
     /// Adds a machine from an address the user typed (FR-001).
