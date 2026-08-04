@@ -186,6 +186,18 @@ The rules that come out of this, in order of how often they save us:
    usually been shaped by the story, not the evidence — we had a complete,
    satisfying account of one incident that turned out to be causally wrong in
    every link.
+9. **A fact you just cited is a fact you have not yet applied to yourself.**
+   Twice now someone quoted a rule to argue about another person's code and
+   missed that the same rule decided their own open change. The information was
+   in hand; only its role was wrong. After you use something as evidence, ask
+   what it says about what you are holding.
+10. **Before proposing "point that test at the other branch," check whether the
+    other branch already has one.** The suggestion sounds like added coverage
+    and can deliver a duplicate — coverage rises, nothing new is guarded.
+11. **When a suggestion of yours turns out to be wrong, say which of your
+    premises failed**, not just that you were wrong. Every reversal in this
+    project came with the specific missing check, and that is what made the
+    next person able to skip it.
 
 ## Hooks
 
