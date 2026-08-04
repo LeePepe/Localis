@@ -535,6 +535,22 @@ The rules that come out of this, in order of how often they save us:
     sourced. **Quote the command you actually ran, pipes included; if you are
     summarising, say "summarising."** A cleaned-up command reads as evidence
     and is memory.
+
+    Two more limits on the same tool, both of which produced wrong counts that
+    a ruling then rested on. **A hand-written pattern covers the forms its
+    author thought of**: four alternations for "a bare `.unreachable`" missed
+    the one inside an array literal, so the count came out 11 against the
+    compiler's 16. And **grep counts strings, not usages** — `.unreachable`
+    names cases in two different enums here, so no amount of pattern-polishing
+    separates them.
+
+    When the number is going to decide something, **let the compiler count**:
+    make the change and read the errors. It knows the difference between two
+    identically spelled cases and a pattern never will. (Related: the audit
+    that found this also found two sites where the "mechanical" fix was not —
+    `#expect(throws: LocalisError.unreachable)` becoming `.unreachable()`
+    silently asserts the *absence* of a diagnostic, so the test would fail for
+    a reason unrelated to its name.)
 17. **An acceptance run that is allowed to do what the user cannot is not an
     acceptance run.** The unpair suite passed end to end — revoke, restart the
     bridge, watch the token get `401 token_revoked`. Restarting is not part of
@@ -710,6 +726,32 @@ The rules that come out of this, in order of how often they save us:
     also uses `8443` — the value would then have two possible sources, and the
     assertion reads whichever arrived. Same failure as three probes sharing one
     exit code, relocated into the fixtures.
+25. **A round-trip test is blind to the damage that matters.** Encode then
+    decode in the same build and everything agrees with itself — including a
+    build that has started writing `{"diagnostic":null}` where older ones write
+    nothing. Compatibility asks whether *another* build can read what this one
+    writes, and a round-trip is silent on that while looking exactly like a
+    serialisation test.
+
+    Assert the bytes. Adding an optional associated value to a persisted enum
+    turned out to change nothing (Swift omits it rather than emitting `null`),
+    but that was measured against a recorded encoding and pinned with a
+    mutation that produced the predicted `{"diagnostic":null}` — not assumed
+    from the round-trip passing.
+26. **A stale build cache fails in the shape of a crash.** `signal code 11`
+    from a test run reads as a runtime crash — the one failure that seems
+    least likely to be a compile problem, so it is the least likely to prompt
+    "did this even build?" Twice in one session it was `.build` holding
+    artefacts from a stashed tree: once the real error was a missing type, once
+    a manifest still listing a file that had been stashed away.
+
+    Compile error, cache mismatch, and genuine crash are one exit code, and the
+    person seeing them is usually holding an unverified change — so every red
+    looks like theirs. Before attributing a failure to your diff, `rm -rf
+    .build` and re-run. And note that the earlier "silent output" from a
+    package sweep was this too: not a run that printed nothing, but a package
+    that never compiled. Declining to count it as a pass was right; not
+    investigating it let the same cause run loose for hours.
 
 ## Hooks
 
