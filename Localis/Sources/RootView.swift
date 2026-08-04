@@ -28,6 +28,16 @@ struct RootView: View {
     /// Explicit path so a screenshot run can push the same value a tap pushes.
     @State private var path = NavigationPath()
 
+    /// How wide a host card is.
+    ///
+    /// A constant rather than a `Space` token: the design vocabulary owns
+    /// spacing, and inventing a card-width entry in it would be a value from
+    /// this file wearing DesignKit's name. Wide enough that the longest
+    /// `HostUnreachableReason.userMessage` wraps to a readable few lines, narrow
+    /// enough that a second machine is visibly there to scroll to — a strip
+    /// whose first card fills the screen looks like a list of one.
+    private static let hostCardWidth: CGFloat = 260
+
     init() {
         do {
             let repository = SwiftDataSessionRepository(
@@ -73,7 +83,19 @@ struct RootView: View {
             // shown above the sessions, because an empty session list with a
             // paired Mac on screen is a different, true statement from an empty
             // screen — and until this ran, the app forgot every Mac on quit.
-            let hosts = hosts ?? HostListModel(repository: repository)
+            //
+            // The probe is substituted only when a launch argument names a
+            // reason (`DemoHostProbe`), which a shipped build cannot receive.
+            // With no argument this is the real `BridgeHostProbe` default, so
+            // the demo path cannot quietly become the one people screenshot.
+            let hosts = hosts ?? {
+                guard let reason = DemoHostProbe.requestedReason else {
+                    return HostListModel(repository: repository)
+                }
+                return HostListModel(
+                    repository: repository, probe: DemoHostProbe(reason: reason)
+                )
+            }()
             self.hosts = hosts
             await hosts.load()
             // Same value a tapped row pushes, so this arrives at the transcript
@@ -131,7 +153,17 @@ struct RootView: View {
                 .padding(.bottom, 8)
         } else if !hosts.rows.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Space.gap) {
+                // `.top`, not the default `.center`. Cards are no longer all
+                // the same height: a machine carrying an unreachable sentence
+                // is two or three lines taller than one that is fine, and
+                // centring floats the healthy machine's name half a card down
+                // from its neighbour's. Names line up; the extra height hangs
+                // below, where the extra information is.
+                //
+                // Another thing that could not happen before this PR — every
+                // card used to be name/address/pill and exactly as tall as the
+                // next, so the default was never wrong until now.
+                HStack(alignment: .top, spacing: Space.gap) {
                     ForEach(hosts.rows) { row in
                         CardInner {
                             VStack(alignment: .leading, spacing: 4) {
@@ -173,6 +205,27 @@ struct RootView: View {
                                 }
                             }
                         }
+                        // **The card needs a width or that `fixedSize` does
+                        // nothing.** `fixedSize(vertical:)` lets text grow
+                        // downwards, but only once something has bounded it
+                        // horizontally — and inside a horizontal `ScrollView`
+                        // nothing does, so the card grew as wide as the sentence
+                        // and ran off the screen edge.
+                        //
+                        // Outside `CardInner`, not inside it: `CardInner` applies
+                        // `maxWidth: .infinity`, so a width set on its content
+                        // bounds the text and lets the card itself keep growing —
+                        // which read as fixed on the phone, where the strip
+                        // scrolls, and showed up on the iPad as two cards of
+                        // different sizes.
+                        //
+                        // Not visible until this PR: every one of these sentences
+                        // is a `HostRuntimeState` the app could not previously
+                        // produce, so the only strings the strip had ever rendered
+                        // were a name, an address, and a one-word pill, none of
+                        // which reach the edge. The clipping arrived with the
+                        // wiring, which is why it is fixed here rather than filed.
+                        .frame(width: Self.hostCardWidth, alignment: .leading)
                     }
                 }
                 .padding(.horizontal, Space.cardPadding)
