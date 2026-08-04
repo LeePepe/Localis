@@ -126,6 +126,25 @@ final class SessionDetailModel {
             // An unavailable backend is a different sentence from a missing one:
             // signing in fixes the first, re-pairing the second. Collapsing them
             // leaves the user with no idea which applies.
+            //
+            // **The `else` cannot currently be reached (#29).** `match` comes
+            // from the repository, and both stores hand back `.available`
+            // unconditionally — deliberately, since a week-old `not_logged_in`
+            // must not grey out a backend the user has since signed into
+            // (`SessionRepository.restored`, and `availabilityIsNotRestored`
+            // pins it). That drop assumes a live `/v1/models` refresh supplies
+            // the current answer, and no such refresh reaches this value:
+            // `BackendCatalog` decodes `.unavailable(reason:)` correctly, but
+            // its only consumer is `BridgeClient.probe`, which reduces the whole
+            // catalog to a `Bool`. Measured 2026-08-04 over `Packages/*/Sources`
+            // and `Localis/Sources`.
+            //
+            // Kept rather than deleted: the read path is right and the write
+            // path is missing, so removing the branch would make the gap
+            // invisible and cost the wording when it lands. Not blocked on #40
+            // either — a richer `probe` return type still leaves this `match`
+            // coming from storage. Delete this note once something hands a
+            // decoded availability to a view.
             sendBlockedReason = match.isAvailable
                 ? nil
                 : String(localized: "This agent isn't signed in on the Mac.")

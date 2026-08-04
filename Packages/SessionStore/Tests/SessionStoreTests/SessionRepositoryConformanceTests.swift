@@ -368,6 +368,34 @@ struct SessionRepositoryConformanceTests {
     /// The optimistic default is deliberate: it can only ever cause a failed
     /// send with a real error from the host, whereas the pessimistic one hides a
     /// working backend behind a stale fact.
+    ///
+    /// **The `/v1/models` refresh this defers to has no production path (#29),
+    /// so what this test pins is currently the only answer anything can get.**
+    /// Measured 2026-08-04 over `Packages/*/Sources` and `Localis/Sources`:
+    /// `withAvailability` has one production caller, `SessionRepository.restored`,
+    /// and it passes `.available`. `BackendCatalog` decodes
+    /// `.unavailable(reason:)` off the wire correctly, but its only consumer is
+    /// `BridgeClient.probe`, which reads `isAvailable` into a `Bool` and drops
+    /// the backend. Nothing carries a decoded availability to storage or to a
+    /// view, so `SessionDetailView`'s "isn't signed in" branch cannot be reached
+    /// — this suite's green is about a value with one possible source, not about
+    /// a store choosing correctly between two.
+    ///
+    /// That does **not** make this test redundant, and it is worth saying which
+    /// half it guards: it fails if a store starts persisting availability, which
+    /// is the mistake that stays wrong after #29 is fixed. It is silent about
+    /// the missing refresh, which is why the note is here rather than left for
+    /// someone to infer from a passing run.
+    ///
+    /// **The two arguments are not guarded equally.** Removing the
+    /// `withAvailability(.available)` from `InMemorySessionRepository.restored`
+    /// turns this red on that argument only (verified 2026-08-04); the SwiftData
+    /// one has no line to remove, because `StoredBackend` has no column and the
+    /// drop is a consequence of the schema. So for the disk-backed store this is
+    /// a property with no corresponding code to break — parameterising over both
+    /// makes the coverage *look* symmetric when only one side has something that
+    /// could regress. The asymmetry is the point of keeping both: the schema is
+    /// what would have to change there, and it would change this test's answer.
     @Test(
         "a stored backend comes back available, whatever was saved",
         arguments: implementations

@@ -125,6 +125,25 @@ public actor InMemorySessionRepository: SessionRepository {
     /// store can know. The SwiftData one drops it by not having a column; this
     /// one has to drop it explicitly, and must, or a preview would show a
     /// backend greyed out by a week-old `not_logged_in`.
+    ///
+    /// **The live refresh this defers to does not exist yet (#29).** Dropping a
+    /// stale negative is only safe if something later supplies a fresh one, and
+    /// measured 2026-08-04 over `Packages/*/Sources` and `Localis/Sources`,
+    /// nothing does: `withAvailability` has exactly one production caller — this
+    /// line, setting `.available`. `BackendCatalog` does decode
+    /// `.unavailable(reason:)` off the wire correctly, but the only consumer of
+    /// that catalog is `BridgeClient.probe`, which reads `isAvailable` into a
+    /// `Bool` and discards the backend itself; nothing stores it or hands it to
+    /// a view. So every `AgentBackend` a screen can reach came through here and
+    /// says `.available`, and `SessionDetailView`'s "isn't signed in" branch is
+    /// unreachable. (Positive control for the search: `availability` matches 18
+    /// lines over those paths, so the one-caller result is not a narrow path.)
+    ///
+    /// Note this is **not** waiting on task #40. That one gives `probe` a return
+    /// type that can carry a reason; it does not give the decoded `availability`
+    /// a route to the UI, and this line would still overwrite it if it had one.
+    /// Delete this note when a production caller passes something other than
+    /// `.available` to `withAvailability`.
     private static func restored(_ backend: AgentBackend) -> AgentBackend {
         backend.withAvailability(.available)
     }
