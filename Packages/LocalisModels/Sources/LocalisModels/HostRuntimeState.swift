@@ -103,24 +103,43 @@ public enum HostUnreachableReason: String, CaseIterable, Sendable {
 extension HostUnreachableReason {
     /// Why this machine is not answering, in words the user can act on.
     ///
-    /// **Nothing in production reaches this yet, and the tests do not say so.**
-    /// Measured 2026-08-04 over `Packages/*/Sources` and `Localis/Sources`:
-    /// `.unreachable(` has zero occurrences, and the only two `HostRuntimeState(`
-    /// calls are this file's own initialisers. (`HostPairingState` matches four
-    /// files over the same paths, so the search did reach production code.) The
-    /// chain that would end here is
+    /// **Production reaches this as of 2026-08-04 (#41/#48), which is what the
+    /// note that stood here was waiting for.** The chain it described as missing
+    /// two layers is now whole:
     ///
-    ///     socket error → `BridgeClient.perform`'s catch-all, which collapses
-    ///     every URLError into `.unreachable` (task #34) → `probe`'s `Bool`
-    ///     return type, which has no room for a reason (task #40) → this.
+    ///     socket error → `TransportFailure` → `LocalisError` →
+    ///     `HostReachability(failure:)` → `BridgeHostProbe.reachability(of:)` →
+    ///     `HostListModel.refreshReachability` → `HostRowState.unreachableDetail`
+    ///     → the host card.
     ///
-    /// Two layers above are missing, so every case below is exercised only by
-    /// values the tests construct directly. That matters because an
-    /// injection-tested branch and a branch the live path drives look identical
-    /// in a green test report — #34 landing will make `certificateRejected`
-    /// *reportable* without making it *produced*, which reads like the wiring is
-    /// done. Delete this note when a production caller constructs
-    /// `.unreachable(reason:)`, not before.
+    /// **What that note got right, and why the replacement is narrower.** Its
+    /// point was that an injection-tested branch and a branch the live path
+    /// drives look identical in a green report, which is true and was worth
+    /// saying. Its trigger was not: "delete when a production caller constructs
+    /// `.unreachable(reason:)`" was already satisfied inside this very file
+    /// (`init(failure:)`, four lines up), so the condition could be met by code
+    /// that reaches nobody. Constructing the value was never the thing in doubt.
+    ///
+    /// The thing in doubt is whether a *screen* gets it, and one command answers
+    /// that:
+    ///
+    ///     grep -rn --include="*.swift" "HostRuntimeState(reachability:" \
+    ///       Localis/Sources Packages/*/Sources
+    ///
+    /// A hit outside this file is a UI-layer caller building the value from
+    /// something measured. Today there is exactly one — `HostListModel.swift`,
+    /// where the probe's answers become rows. (`HostRowState`'s default is
+    /// `HostRuntimeState()`, unlabelled, so it does not match and should not:
+    /// a default is not a measurement. This comment matches itself, which is
+    /// why the criterion is "a hit in another file", not a count.)
+    ///
+    /// If those hits ever fall back to this file alone, the display path has
+    /// been unwired and every case below is once again reachable only from
+    /// tests — restore a note like the one that used to stand here.
+    ///
+    /// (Quote the pattern when running it: unquoted, zsh expands `*.swift`
+    /// itself, and the command fails without running, which looks exactly like
+    /// zero hits.)
     ///
     /// **The reason this exists at all is that the four cases are four different
     /// user actions**, and a screen that renders them as one "unavailable" has
