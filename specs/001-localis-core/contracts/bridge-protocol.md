@@ -12,6 +12,11 @@
 新增取消端点（§4）、续取端点（§3.3）、遥测（§3.4）、host 级 `x_localis`（§2.1）。
 **仍不 bump 版本**：语义反转由 `resumable_turns` 能力位门控，老 bridge 走旧语义照常工作。
 标 **[C]**。
+**[Amendment D](../amendments/D-2026-08-04-contract-gaps.md)（2026-08-04，理由：iOS 与 bridge
+**首次都有真实实现**后的双向比对 + 端到端实测）**：修正**契约自身**的四处缺陷——
+§3.1 与 §3.3 关于 `seq` 的自相矛盾、§3.3 那条 MUST 对 `[DONE]` 不可满足、
+`409 session_busy` 无触发条件、`max_buffer_bytes` 无接线要求（另补端点清单）。
+**不改变任何协议语义、线上字节一字不变，协议版本仍为 `1`**。标 **[D]**。
 
 这是 **iOS App ↔ `localis-bridge`（Mac daemon）** 之间的接口契约，是双方的**唯一真源**。
 bridge 不在本仓库（宪法 VII），但契约在——iOS 侧的契约测试对着本文件写。
@@ -43,6 +48,26 @@ bridge 不在本仓库（宪法 VII），但契约在——iOS 侧的契约测�
 客户端提示「升级 iOS App」；若 < 客户端所需最小值 → 提示「升级 Mac 上的 Bridge」。
 不做部分解析（宪法 §边界校验）。
 **[A]** 一台主机版本不兼容 **MUST NOT** 影响其它主机的可用性——只把**那一台**标为需升级。
+
+### [D] 0.1 端点清单
+
+**[D]** 本表是**编辑性补充**（Amendment D §5）：端点此前分散在各节标题里，其中续取端点
+**根本没出现在任何标题中**（§3.3 的标题是头名 `x-localis-resume-from`，不是路径），
+想知道「一共有几个端点」只能通读全文。对一份被两个独立实现当作唯一真源的契约，这是缺陷。
+**本表不新增、不修改任何端点语义。**
+
+| 方法 | 路径 | 小节 | 门控 |
+|---|---|---|---|
+| `POST` | `/localis/v1/pair` | §1 | — （配对，唯一不带 bearer 的端点） |
+| `GET` | `/v1/models` | §2 | — |
+| `POST` | `/v1/chat/completions` | §3 | — |
+| `POST` | `/v1/turns/{turn_id}/resume` | §3.3 | **[C]** `resumable_turns` |
+| `POST` | `/v1/turns/{turn_id}/cancel` | §4 | **[C]** `resumable_turns` |
+| `POST` | `/v1/approvals/{approval_id}` | §4bis | 后端 capability 含 `tools` |
+| `GET` | `/v1/skills` | §5 | — （**[B]** 载荷读得更少，端点不变） |
+
+除 `/localis/v1/pair` 外，**所有**端点都带 `Authorization: Bearer <token>` 与
+`x-localis-protocol: 1`（§0），且**逐 host 独立**（Amendment A）。
 
 ### [A] Bonjour TXT `hid=` — 换址后认回同一台
 
@@ -186,6 +211,38 @@ OpenAI `/v1/models` 的超集：每项多一个 `x_localis` 对象。
 客户端 MUST 分别处理，MUST NOT 用其中一台的能力推断另一台。
 这些值 MUST NOT 在 iOS 侧硬编码（宪法 §无硬编码）。
 
+#### [D] `max_buffer_bytes` 的接线要求（**客户端 MUST 消费它**）
+
+**[D]** 本小节由 [Amendment D](../amendments/D-2026-08-04-contract-gaps.md) §4 新增。
+此前契约只定义了这个字段的**语义**，从未说客户端要拿它**做什么**——于是 host 声明了、
+客户端解析了、而这个值不影响任何行为。**一个只被解析、不被消费的协商字段，
+是一个看起来在协商的假象。**
+
+先厘清一处此前未区分、极易接错的差别——**这是两个不同的量**：
+
+| | 谁的 | 量的是什么 | 越界后 |
+|---|---|---|---|
+| `max_buffer_bytes` | **host 侧** | **整个 turn** 累积缓冲的上限 | host 截断，续取时标 `truncated`（§3.3） |
+| 单帧缓冲上限 | **客户端侧** | **一个尚未终止的 SSE 帧** | 客户端判定流畸形，产生 typed error |
+
+因此**客户端 MUST NOT 直接把 `max_buffer_bytes` 当作帧上限**（那是把 turn 级额度当帧级额度）。
+但二者之间有一个严格关系：**单个帧不可能比整个 turn 的缓冲还大**——host 声明它整个 turn
+最多缓冲 N 字节，就不可能发出大于 N 字节的帧。所以：
+
+- host **声明**了 `max_buffer_bytes` → 客户端 **MUST** 用它**收紧**自己的帧上限，
+  取「自身默认」与「host 声明值」中的**较小者**。**MUST NOT** 忽略它继续用自身默认，
+  **MUST NOT** 用它**放宽**上限。
+- host **未声明** → 客户端 **MUST** 仍施加一个**有限**的自身上限，**MUST NOT** 无上限读取
+  （否则一个不发空行的 bridge 能把 App 撑到被杀）。
+- 该自身默认值 **由客户端决定、本契约不规定**——它是纯客户端侧的安全网，**从不出现在线上**，
+  两侧无需就它达成一致（规定一个数只会制造一个假的互操作要求）。
+- 但**只要 host 声明了就必须用**：把上限写死为一个与 host 声明无关的常量，
+  等于把协商值硬编码（宪法 §无硬编码）。
+
+> ⚠️ **这是 Amendment D 新增的约束，不是对既有实现的 bug 认定。** 在本条写入契约之前，
+> 客户端不消费 `max_buffer_bytes` 是**完全合规**的——契约没要求过。它是「没接线」，
+> 不是「接错了」。本条通过之后才成为违约，**新工作量的时间戳是 2026-08-04**。
+
 
 
 ---
@@ -215,14 +272,24 @@ x-localis-workspace: <path>         # 可选，仅 capability 含 workspace 时
 
 标准 OpenAI chunk（未命名事件，客户端按 `data:` 直接解析）：
 ```
-data: {"id":"...","object":"chat.completion.chunk","choices":[{"delta":{"content":"He"},"index":0}]}
+data: {"seq":0,"id":"...","object":"chat.completion.chunk","choices":[{"delta":{"content":"He"},"index":0}]}
 
-data: {"id":"...","object":"chat.completion.chunk","choices":[{"delta":{"content":"llo"},"index":0}]}
+data: {"seq":1,"id":"...","object":"chat.completion.chunk","choices":[{"delta":{"content":"llo"},"index":0}]}
 
-data: {"id":"...","object":"chat.completion.chunk","choices":[{"delta":{},"finish_reason":"stop","index":0}]}
+data: {"seq":2,"id":"...","object":"chat.completion.chunk","choices":[{"delta":{},"finish_reason":"stop","index":0}]}
 
 data: [DONE]
 ```
+
+> **[D] 示例已补 `seq`**（[Amendment D](../amendments/D-2026-08-04-contract-gaps.md) §1）。
+> **本示例此前不带 `seq`，与 §3.3「每个 SSE 事件 MUST 带单调递增 `seq`」直接矛盾**——
+> 该示例写于 `seq` 存在之前，Amendment C 引入 `seq` 时漏了回头同步它。
+> **规范条文以 §3.3 为准**：`seq` 逐 turn 从 0 开始单调递增，**内容 delta 帧也不例外**。
+> 这不是可选的格式偏好——`seq` 是续取去重的**唯一**依据（§3.3「MUST 按 seq 去重」），
+> 而内容 delta 恰恰是重放边界上最可能重复、也最不能重复的一类帧：
+> **不带 `seq` 的内容帧在结构上无法去重**，客户端拿到两份 `"He"` 没有任何依据判断
+> 这是重放还是模型真说了两次，直接违反 SC-003「无缺字、无重复」。
+> `data: [DONE]` **不带** `seq`，见 §3.3 的显式例外。
 
 **Localis 扩展事件**（带 `event:` 名，标准客户端会忽略）：
 
@@ -379,11 +446,28 @@ data: {"seq":42,"session_id":"...","context_used":0.42,"queue_depth":2,"model":"
 bridge **MUST** 在流的首个事件中回传 `turn_id`，并 **MUST** 在响应头
 `x-localis-turn-id` 中同时给出（便于客户端在收到任何 body 之前就记下它）。
 
-**序号**：每个 SSE 事件 **MUST** 带**单调递增**的 `seq`（从 0 开始，**逐 turn** 计数）。
+**序号**：每个 SSE 事件 **MUST** 带**单调递增**的 `seq`（从 0 开始，**逐 turn** 计数），
+**`data: [DONE]` 除外**（**[D]**，见下）。这条对**所有**帧生效——**含 §3.1 的标准内容 delta**
+（该示例此前漏写 `seq`，已由 [Amendment D](../amendments/D-2026-08-04-contract-gaps.md) §1 补正）。
 
 ```
 data: {"seq":0,"id":"...","object":"chat.completion.chunk","choices":[{"delta":{"content":"He"},"index":0}]}
 ```
+
+> **[D] 唯一例外：`data: [DONE]`**（[Amendment D](../amendments/D-2026-08-04-contract-gaps.md) §2）。
+> `[DONE]` 是 SSE 的**字面量、不是 JSON 对象**，**没有地方放 `seq` 字段**——
+> 它是 OpenAI 基线的一部分，把它改成 JSON 就不再 OpenAI-compatible（违反本文件基线与宪法 IV）。
+> 上面那条 MUST 若不开这个口子，就是一条**字面上不可满足**的规则：协议要求发送的某个事件，
+> 在结构上无法携带该字段。**一条不可满足的 MUST 比没有规则更糟**——它让「合规」变成不可能，
+> 实现者只能各自决定从哪里开一个没写进契约的口子。
+>
+> 故：bridge 发 `[DONE]` 时 **MUST NOT** 试图为它构造 `seq`；
+> 客户端 **MUST** 把 `[DONE]` 视为**不带 `seq`** 的帧，
+> **MUST NOT** 让它参与 `seq` 去重或 `seq` 连续性判定（它不是「缺了一个号」）。
+>
+> **这个例外不留缺口**：`[DONE]` 是流的终止标记、**不携带任何内容**，
+> 重复收到它的后果仅是「流结束」被判定两次——已由 §7 既有条目「`[DONE]` 后再来数据 → 忽略」
+> 覆盖。**没有内容会因此重复或丢失。**
 
 **续取请求**：`POST /v1/turns/{turn_id}/resume`
 
@@ -491,7 +575,7 @@ v1 客户端一律忽略——这正是下方容错规则的既有行为，**bri
 |---|---|---|
 | 401 | `invalid_token` / `token_revoked` | 清除 token，提示重新配对 |
 | 404 | `unknown_model` | 刷新 `/v1/models`，提示后端已不存在 |
-| 409 | `session_busy` | 提示上一条还没回完 |
+| 409 | `session_busy` | **[D] 保留未用**（见下）。客户端仍 MUST 能安全处理：提示上一条还没回完 |
 | 503 | `backend_unavailable` | 人话提示 + 重试动作 |
 | 426 | `protocol_upgrade_required` | 提示升级对应一端 |
 | **[C]** 404 | `unknown_turn` | 续取/取消一个不存在的 turn → 标 `interrupted` 并允许重试 |
@@ -500,6 +584,34 @@ v1 客户端一律忽略——这正是下方容错规则的既有行为，**bri
 
 **message 字段仅供诊断**，客户端**不得**直接把它当 UI 文案（可能含路径等敏感信息，
 宪法 I / FR-025）；UI 文案按 `code` 本地映射。
+
+### [D] 6.1 `409 session_busy` 为什么标「保留未用」
+
+**[D]** 由 [Amendment D](../amendments/D-2026-08-04-contract-gaps.md) §3 补入。
+
+本表列了这个错误码，但**全文没有任何一处**说 bridge 在什么情况下 MUST（或 MAY）返回它——
+它只有「收到之后怎么办」，没有「什么时候会收到」。
+
+**实测判据**（2026-08-04，真实 bridge）：**同一个 session 并发两个 turn，是两个独立的
+后端进程，不冲突。** 该错误码所描述的冲突，在当前实现下**物理上不存在**。
+
+这与 Amendment C 自洽：C 把 turn 提升为一等公民（`turn_id`、逐 turn 的 `seq`、逐 turn 的
+取消与续取）。**turn 才是并发单位，session 只是归位用的容器**——一个 session 上有两个在跑的
+turn，在 C 之后是**结构上合法**的状态。
+
+**故：**
+
+- bridge **MUST NOT** 为了「用上这个码」而人为串行化同一 session 的 turn。
+  让实现去迁就一行文档、给一个不存在的冲突造一个出来，是把因果颠倒。**文档错了就改文档。**
+- 客户端 **MUST** 仍能安全处理收到 `409 session_busy` 的情况（第三方或未来的 bridge 仍可能
+  发它）——保留本行正是为了让这条降级路径**有定义**而非未定义行为（宪法 §边界校验）。
+- 日后若真出现同 session 冲突的实现，**先补触发条件再启用**，不得默认它已生效。
+
+> **为什么保留而不删除**：删掉只会丢掉答案、留下问题。「同 session 并发要不要报冲突」是
+> 任何实现者都会自然想到的问题；契约里什么都不说，下一个人会重新想一遍，而且很可能得出
+> 「应该串行化」这个**错误**结论——因为它听起来更安全。写明「已经查过，不冲突」是对这个
+> 问题的**永久免疫**。本文件已有此先例：§3.4(a) 保留了一段被推翻的旧设计并写明「那是错的，
+> 已作废」，而非静默删除。
 
 ---
 
@@ -560,4 +672,17 @@ v1 客户端一律忽略——这正是下方容错规则的既有行为，**bri
 - [ ] host A 返回 `x-localis-protocol: 2`（超出支持）→ 只标 A 需升级，**host B 完全可用**（FR-032）
 - [ ] host A 返回 401 `token_revoked` → 只清 A 的 token，**B 的凭据与连接不受影响**
 - [ ] 解除配对 host A → A 的 token 与 pinned SPKI **零残留**，且 **0 条会话被删除**（FR-027）
+
+**[D] 契约自身缺陷修正（Amendment D 新增）**
+
+- [ ] **[D]** **标准内容 delta 帧**（§3.1 那类，非命名事件）**带 `seq`** → 续取边界上按 `seq`
+      去重成功。**反例必须也测**：收到**不带 `seq`** 的内容 delta → 判定为畸形/不可去重并产生
+      typed error，**MUST NOT** 静默当作新内容追加（那正是 §3.1 旧示例会导致的重复字）
+- [ ] **[D]** `data: [DONE]` **不带 `seq`** → **不**参与去重、**不**被判为「`seq` 断号」，
+      流正常结束（不可满足的 MUST 已开例外）
+- [ ] **[D]** host 声明 `max_buffer_bytes: N` **小于**客户端自身默认 → 客户端帧上限**收紧到 N**；
+      host 声明值**大于**自身默认 → 上限**不放宽**（取较小者）；host **未声明** → 仍有**有限**上限，
+      **不得**无上限读取
+- [ ] **[D]** 收到 `409 session_busy`（当前 bridge 不会发，但第三方可能）→ 客户端**安全降级、
+      不崩溃**；且**不得**据此假设同 session 的 turn 必须串行
 
