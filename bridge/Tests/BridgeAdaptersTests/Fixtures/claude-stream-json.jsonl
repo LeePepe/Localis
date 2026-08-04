@@ -1,0 +1,12 @@
+{"type": "system", "subtype": "init", "session_id": "11111111-2222-3333-4444-555555555555"}
+{"type": "stream_event", "session_id": "11111111-2222-3333-4444-555555555555", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking"}}}
+{"type": "stream_event", "session_id": "11111111-2222-3333-4444-555555555555", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "The user is asking"}}}
+{"type": "stream_event", "session_id": "11111111-2222-3333-4444-555555555555", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": " me to say exactly \"hello world\". This is a straightforward request - they want me to output"}}}
+{"type": "stream_event", "session_id": "11111111-2222-3333-4444-555555555555", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": " that exact text."}}}
+{"type": "stream_event", "session_id": "11111111-2222-3333-4444-555555555555", "event": {"type": "content_block_stop", "index": 0}}
+{"type": "stream_event", "session_id": "11111111-2222-3333-4444-555555555555", "event": {"type": "content_block_start", "index": 1, "content_block": {"type": "text"}}}
+{"type": "stream_event", "session_id": "11111111-2222-3333-4444-555555555555", "event": {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "hello world"}}}
+{"type": "stream_event", "session_id": "11111111-2222-3333-4444-555555555555", "event": {"type": "content_block_stop", "index": 1}}
+{"type": "stream_event", "session_id": "11111111-2222-3333-4444-555555555555", "event": {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}}
+{"type": "stream_event", "session_id": "11111111-2222-3333-4444-555555555555", "event": {"type": "message_stop"}}
+{"type": "result", "subtype": "success", "is_error": false, "session_id": "11111111-2222-3333-4444-555555555555", "stop_reason": "end_turn", "usage": {"input_tokens": 44313, "output_tokens": 41}}
