@@ -200,39 +200,54 @@ struct LocalisAppTests {
         // `composer = nil` in `apply` reddens this test by name. What follows
         // adds the second claim on top.
         let composer = try #require(await model.composer)
-        #expect(composer.canSend == false)
-        #expect(composer.blockedReason != nil)
+        // Flipped by #25 along with the test below. Before the connect path
+        // existed these read `canSend == false` / `blockedReason != nil`, which
+        // was the deadlock showing up in a test that is not about it: this test
+        // is about the transcript and the composer being projected at all, and
+        // it happened to also pin the composer shut. Recorded red on
+        // `origin/main @ 24cfceb` at :212 and :213 before the fix landed.
+        #expect(composer.canSend == true)
+        #expect(composer.blockedReason == nil)
     }
 
-    /// A restored session cannot be replied to, and that is not a UI decision.
+    /// A restored session *can* be replied to, once the Mac answers (#25).
     ///
-    /// `Session.canSend` is `status == .idle`, and every read path returns
-    /// `.disconnected` for a session that was written before this launch — the
-    /// process holds no connection to that Mac, so reporting `.idle` would be a
-    /// claim the app cannot back. The composer is therefore closed on open.
+    /// **This test was the pinned dead end, inverted.** It used to assert
+    /// `canSend == false` and carried a note saying that was a symptom, not the
+    /// design: `Session.canSend` is `status == .idle`, every read normalises a
+    /// stored session to `.disconnected`, and the only writes producing `.idle`
+    /// came at the end of a turn that `canSend` gates. The note asked whoever
+    /// closed the gap to run the positive case red first and record the text,
+    /// because a test that turns green when a `.disabled` comes off cannot be
+    /// told apart from one that was never strong enough to be red.
     ///
-    /// **This is asserted because it is currently a dead end, not because it is
-    /// the design.** Nothing anywhere in the app writes `.idle` back:
-    /// `ChatService` sets it when a turn *finishes* (`ChatService.swift`), and
-    /// starting that turn already requires `canSend`. So the state machine has
-    /// no edge back in, and every stored session is permanently unsendable.
-    /// The missing edge is the connect attempt that belongs with the real
-    /// `BridgeClient` — task #25, which owns the fix.
+    /// Recorded red on `origin/main @ 24cfceb`, before the connect path existed,
+    /// verbatim:
     ///
-    /// Pinned rather than left implicit so that closing that gap has to come
-    /// past this test: whoever adds the connect path will see this expectation
-    /// go red, which is the intended signal, not a regression.
+    /// ```
+    /// --- opening a session projects a transcript and a composer
+    ///     LocalisAppTests.swift:212: Expectation failed:
+    ///         (composer.canSend → false) == true
+    ///     LocalisAppTests.swift:213: Expectation failed:
+    ///         (composer.blockedReason → "This Mac isn't reachable. You can
+    ///         still read the conversation.") == nil
+    /// ```
     ///
-    /// **The positive case — "a reconnected session can be replied to" — is
-    /// deliberately not written here, not even disabled.** It cannot pass
-    /// today, because there is no connect call to make it pass. And a
-    /// `.disabled` test has a failure mode of its own: when the block lifts and
-    /// the `.disabled` comes off, a test that turns green is indistinguishable
-    /// from one that was never strong enough to be red. Avoiding that needs the
-    /// test to be run red *first*, with the failure text recorded — which only
-    /// whoever writes the fix can do. It belongs to #25 with the fix.
-    @Test("a restored session opens with the composer closed, and says why")
-    func restoredSessionCannotSendYet() async throws {
+    /// **What makes it green now.** `SessionDetailModel.load` ends with a
+    /// reconnect: it asks the transport whether the backend is live, and writes
+    /// the answer back. The app's transport is still `EchoTransport`, whose
+    /// `probe` returns true unconditionally (`Fakes/EchoTransport.swift:106`) —
+    /// so this asserts the wiring, and the milestone-B swap to `BridgeClient` is
+    /// what makes the answer mean anything. The fake announces itself on screen,
+    /// so no screenshot can pass this off as a live Mac.
+    ///
+    /// `orphanedSessionStaysBlocked` in `SessionReconnectTests` is the guard on
+    /// the shortcut this must not be made green by: relaxing the normalisation
+    /// so `.idle` reads back would hand every stored session a composer on a
+    /// connection nobody opened. That test was green before this change and is
+    /// green after it.
+    @Test("a restored session can be replied to once its Mac answers")
+    func restoredSessionBecomesSendable() async throws {
         let host = HostID()
         let id = UUID()
         let repository = try await Self.seeded(
@@ -246,11 +261,9 @@ struct LocalisAppTests {
         let model = await Self.detailModel(repository: repository, sessionID: id)
         await model.load()
 
-        // Seeded `.idle`, read back `.disconnected`: the normalisation is the
-        // point, so this asserts the round trip rather than the seed.
         let composer = try #require(await model.composer)
-        #expect(composer.canSend == false)
-        #expect(composer.blockedReason?.isEmpty == false)
+        #expect(composer.canSend == true)
+        #expect(composer.blockedReason == nil)
     }
 
     /// A session deleted between the list rendering and the tap says so.
@@ -377,6 +390,33 @@ struct LocalisAppTests {
     /// mechanisms — this one is `resolveBackend` doing its job, that one is
     /// `submit` doing its own. Asserting both through one call is how the
     /// earlier version came to be named for the mechanism it was not testing.
+    ///
+    /// **Why there is no sibling test for the *unavailable* backend**, which is
+    /// `resolveBackend`'s other reason to block sending. It cannot be written
+    /// yet, and not because of a gap in the fixtures. Two layers, and the
+    /// second is the one that matters for whoever picks up #29:
+    ///
+    /// - **Nothing produces it.** `grep -rn "\.models(" Localis/Sources` is
+    ///   empty, so `SessionDetailView.swift:116`'s `match.isAvailable` cannot
+    ///   be false at all today. The "isn't signed in" sentence has no writer.
+    /// - **And the read path would erase it anyway.** Both repositories drop
+    ///   `availability` on the way out, deliberately: the SwiftData one by
+    ///   having no column for it (`StoredMapping.swift:117`), the in-memory one
+    ///   by an explicit `withAvailability(.available)`
+    ///   (`SessionRepository.swift:129`). It answers "can the host route to
+    ///   this *right now*", which nothing on disk knows, and a stored
+    ///   `not_logged_in` would grey out a backend the user has since signed
+    ///   into.
+    ///
+    /// So wiring the live refresh is **not** sufficient on its own: as long as
+    /// the backend reaching the view came out of a repository, it arrives
+    /// `.available` regardless of what the host just said. Either the refresh
+    /// hands runtime availability to the model without a round trip through
+    /// storage, or that erase-on-read rule changes — and it is a rule the two
+    /// implementations were deliberately aligned on, so it is not a one-liner.
+    ///
+    /// Tracked as #29, both layers, rather than papered over with a test that
+    /// asserts a path nothing can reach.
     @Test("a loaded session with no backend has already said why it can't send")
     func loadedSessionWithoutBackendExplainsItself() async throws {
         let host = HostID()

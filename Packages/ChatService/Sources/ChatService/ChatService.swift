@@ -193,6 +193,106 @@ public actor ChatService {
         }
     }
 
+    // MARK: - Reconnect
+
+    /// Opens the link a restored session does not have, and reports what it
+    /// found (#25).
+    ///
+    /// **The deadlock this closes.** `Session.canSend` is `status == .idle`, and
+    /// every read path normalizes a stored session to `.disconnected` — rightly,
+    /// because the process holds no connection after a relaunch and `.idle`
+    /// means *connected and not busy*. But until this existed, the only writes
+    /// producing `.idle` were at the end of a completed turn, and starting a
+    /// turn requires `canSend`. The state was entered on every cold start and
+    /// left by nothing: every conversation from yesterday had a permanently grey
+    /// composer, with no error anywhere to explain it.
+    ///
+    /// **`.error` was the same dead end**, and reachable without a relaunch:
+    /// `sessionStatus(for:)` clears it when a later turn ends, and that turn
+    /// could not be started. One dropped connection closed the conversation for
+    /// good.
+    ///
+    /// **Why this probes instead of assuming.** Writing `.idle` because the user
+    /// opened the screen restores the composer by asserting a connection nobody
+    /// checked — FR-053 inverted, and precisely what the normalization exists to
+    /// prevent. The host is asked, and its answer is what gets written. A silent
+    /// Mac leaves the session exactly as it was.
+    ///
+    /// **This never throws.** It runs on open, and reading is never gated
+    /// (FR-036): a failure to reach the Mac must leave the transcript readable
+    /// rather than replacing it with an error screen. An unreachable host is
+    /// already fully expressed by the status coming back unchanged.
+    public func reconnect(_ session: Session, to backend: AgentBackend) async -> Session {
+        guard Self.isReconnectable(session.status) else { return session }
+        // The Mac being up is not enough. A backend the host lists but is not
+        // signed into would let a session report as sendable and then fail at
+        // the far end — the accept-then-fail shape FR-053 rules out. Checked
+        // before the probe, so no request goes out for an answer already known.
+        guard backend.isAvailable else { return session }
+        guard await transport.probe(backend) else { return session }
+
+        let reconnected = session.withStatus(.idle, at: now())
+
+        // Persisted only when the previous status was one a read gives back.
+        //
+        // `restoredStatus` (StoredMapping.swift:99) returns `.error` unchanged
+        // and collapses `.idle/.disconnected/.connecting/.streaming` to
+        // `.disconnected`. So from `.disconnected` or `.connecting` this write
+        // stores a status that the very next read turns back into what was
+        // already there — it cannot change any later answer.
+        //
+        // It is not merely wasted, which is why this is a guard and not a
+        // tidy-up: `withStatus` bumps `updatedAt` (Session.swift:96), and both
+        // repositories sort the list by `updatedAt` descending
+        // (SwiftDataSessionRepository.swift:46). Writing here would push a
+        // conversation to the top of the list because the user *opened* it,
+        // which on screen is indistinguishable from it having new activity.
+        //
+        // From `.error` the write is the point. That one does survive a read,
+        // so a session left failed comes back failed on every launch, forever,
+        // with `canSend` false and no turn permitted to clear it. Replacing it
+        // makes the next read `.disconnected` — still not sendable, but a state
+        // this same call can lift.
+        //
+        // `try?`: the reconnect succeeded, and a store that could not record it
+        // must not turn a working link into a closed composer. The in-memory
+        // status is the one the user is about to type against.
+        if case .error = session.status {
+            try? await repository.save(reconnected)
+        }
+        return reconnected
+    }
+
+    /// Which statuses a probe is allowed to change.
+    ///
+    /// Exhaustive with no `default`, so a new status has to be given an answer
+    /// here rather than inheriting one — and the safe inheritance would be the
+    /// wrong one in both directions.
+    private static func isReconnectable(_ status: SessionStatus) -> Bool {
+        switch status {
+        case .disconnected, .connecting, .error:
+            // `.error` included deliberately: a turn that failed because the
+            // link died is exactly the case a successful probe should lift, and
+            // leaving it out is how the second dead end survived.
+            return true
+        case .idle:
+            // Already sendable. Probing would put a request on the wire every
+            // time the user taps into a conversation, for an answer that changes
+            // nothing.
+            return false
+        case .streaming:
+            // A turn is in flight. Writing `.idle` over it hands the composer
+            // back mid-turn and invites a second send on top of the first.
+            return false
+        case .orphaned:
+            // A fact about *pairing*, not about a connection, and it outranks
+            // any liveness answer. The bridge may be up and reachable; the user
+            // still revoked it, and FR-027 keeps the transcript readable and
+            // unsendable rather than deleting it.
+            return false
+        }
+    }
+
     /// Maps anything thrown out of the transport into the one error vocabulary.
     ///
     /// `AgentTransport` conformers are required to map their own failures
