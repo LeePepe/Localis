@@ -290,6 +290,23 @@ The rules that come out of this, in order of how often they save us:
    printed the compiler's actual sentence, the recorded delegate outcomes, the
    real number. `❌` and `rc=1` are summaries, and every summary is a place two
    different causes can meet and become indistinguishable.
+
+   `rc=0` is the most dangerous of them, because every shell tool speaks it and
+   nobody doubts it. macOS ships **LibreSSL**, not OpenSSL, and LibreSSL answers
+   an unrecognised flag by printing usage and exiting **0 without producing the
+   output file** — so `openssl pkcs12 -export -legacy` "succeeds" and leaves
+   nothing behind. A script gated on the exit code sails past and fails much
+   later somewhere unrelated. Gate on the artifact instead: does the file exist,
+   does it parse, does it contain what you asked for. (`BridgeIdentity.swift`
+   already checks both files exist rather than the status, which is why the
+   bridge side never hit this.)
+
+   And keep the output whole while you still do not know what you are looking
+   for. `| grep -v pass` on a test run hid a compilation failure and produced
+   an empty result that read as "it ran and printed nothing"; `| tail -22` on a
+   crashing probe cut off the exception reason. **A filter written before the
+   answer is known is a filter written against the wrong thing.** Tee the run
+   to a file, then narrow.
 3. **"More carefully" is not a fix.** It does nothing for a stale read, a wrong
    ref, or a misused tool — three things that have each bitten us. Change the
    procedure, not the diligence.
