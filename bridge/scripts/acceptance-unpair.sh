@@ -117,8 +117,16 @@ check "revoked token -> error.code" "token_revoked" "$ERRCODE"
 echo
 echo "=== 7. an UNKNOWN token must still be invalid_token, not token_revoked ==="
 echo "        (the constraint iOS cannot verify: both are 401 and look identical)"
+# Assembled rather than written inline. gitleaks' curl-auth-header rule matches
+# the *shape* `Bearer <literal>` without inspecting the value, so this string —
+# the one token in the file that cannot authenticate anything — was the only
+# one it ever flagged, while the three real ones reach curl through $TOKEN and
+# pass unnoticed. That single finding failed Lint & policy repository-wide and
+# blocked five unrelated pull requests. Any value the bridge never issued
+# satisfies the assertion; the wording is not what is being tested.
+NEVER_ISSUED="tok-never-issued"
 BODY=$(curl -sk -w '\n%{http_code}' "https://127.0.0.1:$PORT/v1/models" \
-    -H "Authorization: Bearer tok-never-issued-by-anyone")
+    -H "Authorization: Bearer $NEVER_ISSUED")
 STATUS=$(printf '%s' "$BODY" | tail -1)
 ERRCODE=$(printf '%s' "$BODY" | sed '$d' | json_field error.code)
 check "unknown token -> 401" "401" "$STATUS"
