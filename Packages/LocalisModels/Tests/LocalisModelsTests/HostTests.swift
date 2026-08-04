@@ -178,6 +178,99 @@ struct HostRuntimeStateTests {
     }
 }
 
+/// The wording each reason projects (#35).
+///
+/// **Why these assert on properties rather than on the strings.** A test that
+/// pins `.offline` to its exact sentence passes by restating the implementation
+/// and fails on every copy edit, which teaches the next person to update the
+/// expected value without reading it. What has to hold is that the four reasons
+/// stay four *distinct, actionable* messages — that is the whole reason the enum
+/// carries a case instead of a bool. So that is what is asserted.
+@Suite("HostUnreachableReason wording")
+struct HostUnreachableReasonWordingTests {
+    @Test("every reason has words")
+    func everyReasonIsGivenWords() {
+        // `CaseIterable` is what makes this fail for a case added later. An
+        // exhaustive `switch` in the implementation forces *a* branch to be
+        // written, but nothing stops that branch from returning "" — this is
+        // the half the compiler cannot check.
+        for reason in HostUnreachableReason.allCases {
+            #expect(!reason.userMessage.isEmpty, "\(reason) has no message")
+        }
+    }
+
+    @Test("no two reasons say the same thing")
+    func reasonsAreNotInterchangeable() {
+        // The failure this exists for is a fifth case added by copying the line
+        // above it: it compiles, it passes `everyReasonIsGivenWords`, and it
+        // tells the user to fix the wrong thing. Distinctness catches it.
+        let messages = Set(HostUnreachableReason.allCases.map(\.userMessage))
+
+        #expect(messages.count == HostUnreachableReason.allCases.count)
+    }
+
+    @Test("a changed certificate is not offered as something to retry")
+    func certificateRejectionNamesNoRetry() {
+        // Constitution V: no "trust anyway", and no wording that reads as one.
+        // "Try again" on this branch means "reconnect and pin whatever is being
+        // presented now", which is the attack the pin exists to stop.
+        let message = HostUnreachableReason.certificateRejected.userMessage.lowercased()
+
+        #expect(!message.contains("try again"))
+        #expect(!message.contains("retry"))
+        // The two above pass for any string lacking those words, including an
+        // empty one or a sentence about something else. These pin that it is
+        // about identity and names the one action that resolves it.
+        #expect(message.contains("identity"))
+        #expect(message.contains("pair again"))
+    }
+
+    @Test("being offline does not send the user to re-pair")
+    func offlineDoesNotSuggestRepairing() {
+        // The inverse mistake, and the likelier one: an asleep Mac is the most
+        // common failure here, and telling that user to pair again sends them
+        // to redo credentials that work. `offline` is the one case where
+        // waiting is the answer.
+        let message = HostUnreachableReason.offline.userMessage.lowercased()
+
+        #expect(!message.contains("pair again"))
+        #expect(message.contains("network") || message.contains("awake"))
+    }
+
+    @Test("the two 'pair again' reasons still name different causes")
+    func credentialAndIdentityFailuresAreDistinguished() {
+        // `certificateRejected` and `unauthorized` share an action, which is
+        // exactly why they are easy to collapse. They must not be: one says the
+        // machine may not be the machine, the other says this device's
+        // credential stopped working. Sent to the wrong one the user inspects
+        // the wrong thing — and in the certificate case, shrugs at a real
+        // warning.
+        let identity = HostUnreachableReason.certificateRejected.userMessage
+        let credential = HostUnreachableReason.unauthorized.userMessage
+
+        #expect(identity != credential)
+        #expect(identity.lowercased().contains("identity"))
+        #expect(!credential.lowercased().contains("identity"))
+    }
+
+    @Test("wording carries nothing that came off the wire")
+    func wordingIsDerivedLocally() {
+        // Constitution I. The text is derived from the case, so a host's own
+        // `error.message` — which may contain absolute paths — has no route
+        // into it. Asserted rather than assumed because the cheap fix to a
+        // vague message is to append the underlying reason, and that reason
+        // comes from the far end.
+        for reason in HostUnreachableReason.allCases {
+            let message = reason.userMessage
+            #expect(!message.contains("/"), "\(reason) carries a path separator")
+            #expect(!message.contains("http"), "\(reason) carries an endpoint")
+            // The raw case name leaking in would mean the string was built from
+            // the value rather than written for the user.
+            #expect(!message.contains(reason.rawValue), "\(reason) renders its own case name")
+        }
+    }
+}
+
 extension HostTests {
     /// Exposed for `HostRuntimeStateTests`, which asserts on Host's encoding.
     static func makePairedForRuntimeCheck() -> LocalisHost { makePaired() }

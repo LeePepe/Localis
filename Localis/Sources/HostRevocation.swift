@@ -37,9 +37,22 @@ extension HostCredentialStore: HostCredentialWriting {}
 /// would mean deciding on a value from which the distinction has already been
 /// erased, so the decision would be made by whichever caller mapped it. The
 /// error keeps both codes apart, so it is what arrives here; the reason is what
-/// this produces for the UI, not what it consumes. #30 tracks giving
-/// `HostUnreachableReason` the missing case so the display can distinguish them
-/// too.
+/// this produces for the UI, not what it consumes.
+///
+/// **`HostUnreachableReason` will not be given the missing case. Ruled
+/// 2026-08-04.** The error splits the two codes because they call for different
+/// actions — one clears the Keychain, one abandons the operation, and
+/// `invalid_token`'s cause space is open where `token_revoked` reports a known
+/// event (Amendment E §1). The reason enum answers a different question: *why is
+/// this host unusable right now*, and there both answers are "the credential no
+/// longer works, pair again". A case whose user action is identical to its
+/// neighbour's is one `HostUnreachableReasonWordingTests` already refuses by
+/// construction — `reasonsAreNotInterchangeable` requires the messages to stay
+/// as distinct as the cases are numerous, so adding a fifth reason that says
+/// what `unauthorized` says turns that test red rather than merely being
+/// redundant. The action difference is carried by `HostPairingState` instead:
+/// `token_revoked` reaches `.revoked` through this type, `invalid_token`
+/// reaches nothing.
 ///
 /// **The operation is defined by what it must not do.** Writing `.revoked` is
 /// one line and any implementation gets it right. What goes wrong quietly is

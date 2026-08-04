@@ -60,3 +60,73 @@ public enum HostUnreachableReason: String, CaseIterable, Sendable {
     /// The host speaks a protocol version this app does not support (FR-032).
     case unsupportedProtocol
 }
+
+extension HostUnreachableReason {
+    /// Why this machine is not answering, in words the user can act on.
+    ///
+    /// **Nothing in production reaches this yet, and the tests do not say so.**
+    /// Measured 2026-08-04 over `Packages/*/Sources` and `Localis/Sources`:
+    /// `.unreachable(` has zero occurrences, and the only two `HostRuntimeState(`
+    /// calls are this file's own initialisers. (`HostPairingState` matches four
+    /// files over the same paths, so the search did reach production code.) The
+    /// chain that would end here is
+    ///
+    ///     socket error → `BridgeClient.perform`'s catch-all, which collapses
+    ///     every URLError into `.unreachable` (task #34) → `probe`'s `Bool`
+    ///     return type, which has no room for a reason (task #40) → this.
+    ///
+    /// Two layers above are missing, so every case below is exercised only by
+    /// values the tests construct directly. That matters because an
+    /// injection-tested branch and a branch the live path drives look identical
+    /// in a green test report — #34 landing will make `certificateRejected`
+    /// *reportable* without making it *produced*, which reads like the wiring is
+    /// done. Delete this note when a production caller constructs
+    /// `.unreachable(reason:)`, not before.
+    ///
+    /// **The reason this exists at all is that the four cases are four different
+    /// user actions**, and a screen that renders them as one "unavailable" has
+    /// discarded the only part worth carrying. Waiting fixes `offline` and fixes
+    /// nothing else; `certificateRejected` must not read as something waiting or
+    /// retrying could clear.
+    ///
+    /// Lives here rather than in the view layer for the same reason
+    /// `LocalisError.userMessage` does: one vocabulary, derived locally from the
+    /// case. Nothing off the wire reaches this text, so no absolute path from a
+    /// host's own message can arrive on a screen through it (constitution I).
+    ///
+    /// Exhaustive with no `default`. A fifth reason must be given words here
+    /// rather than inheriting whatever the previous case said — which is how a
+    /// new failure ends up telling the user to re-pair a machine whose
+    /// certificate is fine.
+    public var userMessage: String {
+        switch self {
+        case .offline:
+            // Says what is still true, because it usually is: the machine is
+            // asleep or on another network, and nothing is wrong with pairing.
+            return String(localized: "This Mac isn't answering. Check it's awake and on the same network.")
+        case .certificateRejected:
+            // Constitution V: no override, and it must not read as retryable.
+            // Deliberately the same wording as
+            // `LocalisError.certificatePinMismatch.userMessage` — the user is
+            // in one situation and hitting it from two code paths should not
+            // produce two different sentences about it.
+            return String(localized: "This Mac's identity has changed. Pair again to confirm it's the same machine.")
+        case .unauthorized:
+            // Distinct from `certificateRejected` on purpose: the machine is
+            // who it claims to be, this device's credential is what stopped
+            // working. Both end in "pair again", but naming the wrong cause
+            // sends the user to inspect the wrong thing when it does not help.
+            return String(localized: "This Mac no longer accepts this device. Pair again to continue.")
+        case .unsupportedProtocol:
+            // Names an action on the *Mac*, not on this screen. FR-032's
+            // mismatch is not something tapping here can resolve, and a message
+            // that implies otherwise is an invitation to keep tapping.
+            //
+            // Which side is out of date is not known at this level —
+            // `LocalisError.protocolUpgradeRequired` carries that and says so.
+            // This value does not, so the text stays neutral rather than
+            // guessing a direction and being wrong half the time.
+            return String(localized: "This Mac's Bridge and Localis are different versions. Update the older one to continue.")
+        }
+    }
+}
