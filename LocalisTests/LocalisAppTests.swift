@@ -266,53 +266,6 @@ struct LocalisAppTests {
         #expect(composer.blockedReason == nil)
     }
 
-    /// A conversation whose agent is gone says which agent, and stays readable.
-    ///
-    /// **Why this asserts a missing backend rather than an unavailable one.**
-    /// The obvious version of this test seeds a backend with
-    /// `.unavailable(reason: "not_logged_in")` and expects the "not signed in"
-    /// sentence. It cannot work, and the reason is deliberate design rather
-    /// than a gap: `StoredMapping.swift:117` does not persist `availability`,
-    /// because it answers "can the host route to this *right now*", which
-    /// nothing on disk knows — storing it would grey out a backend the user has
-    /// since signed into. A seeded `.unavailable` backend therefore reads back
-    /// `.available`, and the assertion fails on the fixture, not the code.
-    ///
-    /// **A consequence worth stating rather than working around**: nothing in
-    /// the app layer calls `models()` yet, so `SessionDetailView.swift:116`'s
-    /// `match.isAvailable` cannot currently be false at all. The "isn't signed
-    /// in" sentence is unreachable until the live refresh is wired, and that is
-    /// milestone B's work, not something to fake here. A test that reached for
-    /// it would be asserting a path with no producer.
-    ///
-    /// So this takes the branch that *is* reachable — `resolveBackend`'s first
-    /// guard, where the session names a backend the host no longer lists. Seed
-    /// and read agree there, and re-pairing is the fix, which is a different
-    /// sentence from signing in.
-    @Test("a session whose agent is gone says why it cannot send")
-    func missingBackendReportsWhy() async throws {
-        let host = HostID()
-        let id = UUID()
-        let repository = try await Self.seeded(
-            (
-                host,
-                AgentBackend(id: "claude", displayName: "Studio Claude"),
-                // Names an agent the host does not advertise, which is what a
-                // backend removed since the session was created looks like.
-                Self.session(id: id, host: host, backendID: "codex", status: .idle)
-            )
-        )
-
-        let model = await Self.detailModel(repository: repository, sessionID: id)
-        await model.load()
-
-        // Readable regardless: losing the agent must not cost the transcript
-        // (FR-036).
-        #expect(await model.loadError == nil)
-        #expect(await model.backend == nil)
-        #expect(await model.sendBlockedReason?.isEmpty == false)
-    }
-
     /// A session deleted between the list rendering and the tap says so.
     ///
     /// The wrong behaviour here is not a crash — it is an empty transcript with
@@ -437,6 +390,24 @@ struct LocalisAppTests {
     /// mechanisms — this one is `resolveBackend` doing its job, that one is
     /// `submit` doing its own. Asserting both through one call is how the
     /// earlier version came to be named for the mechanism it was not testing.
+    ///
+    /// **Why there is no sibling test for the *unavailable* backend**, which is
+    /// `resolveBackend`'s other reason to block sending. It cannot be written
+    /// yet, and not because of a gap in the fixtures:
+    ///
+    /// - `StoredMapping.swift:117` deliberately does not persist
+    ///   `availability` — it answers "can the host route to this *right now*",
+    ///   which nothing on disk knows, and a stored `not_logged_in` would grey
+    ///   out a backend the user has since signed into. So a seeded
+    ///   `.unavailable` reads back `.available` and any such test would fail on
+    ///   its own fixture.
+    /// - The live refresh that *would* produce it does not exist:
+    ///   `grep -rn "models()" Localis/Sources/` finds nothing, so
+    ///   `SessionDetailView.swift:116`'s `match.isAvailable` cannot be false at
+    ///   all today. The "isn't signed in" sentence has no producer.
+    ///
+    /// Tracked as #29 rather than papered over with a test that asserts a path
+    /// nothing can reach.
     @Test("a loaded session with no backend has already said why it can't send")
     func loadedSessionWithoutBackendExplainsItself() async throws {
         let host = HostID()
