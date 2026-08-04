@@ -394,7 +394,38 @@ struct BridgePairingTests {
         store.removeAll()
     }
 
-    @Test("the code is not carried in any error")
+    /// A certificate rejected *during pairing* must say so.
+    ///
+    /// The worst moment for this to be mislabelled. Pairing is when the pin is
+    /// established, so a certificate that fails here is either a host the user
+    /// has not actually reached or one presenting a key that is not the one on
+    /// screen. Reporting it as "your Mac is asleep" invites a retry, and a
+    /// retry that succeeds against the wrong certificate pins the wrong
+    /// certificate — permanently, and with no override path by design
+    /// (constitution V).
+    ///
+    /// Paired with `transportFailureIsUnreachable` above so the two answers are
+    /// shown to be distinguished, not merely both reachable (#34).
+    @Test("a rejected certificate during pairing is named, not reported as an outage")
+    func certificateFailureDuringPairingIsPinMismatch() async throws {
+        let http = StubHTTP(responses: [.failure(URLError(.serverCertificateUntrusted))])
+        let store = HostCredentialStore(service: Self.testService())
+        let pairing = BridgePairing(http: http, credentials: store)
+
+        await #expect(throws: LocalisError.certificatePinMismatch) {
+            try await pairing.pair(
+                host: HostID(),
+                endpoint: HostEndpoint(host: "mac.local", port: 8443),
+                code: "418302",
+                presenting: SPKIHash(base64: "AAA="),
+                deviceName: "iPhone",
+                deviceID: UUID()
+            )
+        }
+
+        store.removeAll()
+    }
+
     func codeNotInErrors() async throws {
         // The pairing code is short-lived but is still a credential, and errors
         // travel further than anyone expects.

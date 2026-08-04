@@ -58,20 +58,21 @@ public struct BridgePairing: Sendable {
         let response: HTTPURLResponse
         do {
             (data, response) = try await http.perform(request)
-        } catch let error as LocalisError {
-            throw error
         } catch {
-            // The Mac is asleep, off the network, or refusing connections.
-            // Reporting this as a bad code sends the user to re-read a code
-            // that was fine.
+            // `TransportFailure` decides, rather than a catch-all here, so this
+            // path and the streamed one cannot answer differently for the same
+            // failure. Answering `.unreachable` for everything told a user
+            // whose host presented an unpinned certificate that their Mac was
+            // asleep — during pairing, the one moment the pin is established
+            // (#34).
             //
-            // The cause is carried for the same reason as in `BridgeClient`
-            // (#34), and it matters more here than anywhere else: pairing is
-            // the first time this device talks to this Mac, so a rejected
-            // certificate surfaces as "can't reach it" at the exact moment the
-            // user has no working state to compare against. `-1202` in a log is
-            // the difference between that and a Mac that is genuinely asleep.
-            throw LocalisError.unreachable(diagnostic: TransportDiagnostic(error))
+            // What it cannot place stays `.unreachable` carrying the OS's
+            // `domain` and `code`, and that matters more here than anywhere
+            // else: pairing is the first time this device talks to this Mac, so
+            // the user has no working state to compare against. `-1202` in a
+            // log is the difference between a refused certificate and a Mac
+            // that is genuinely asleep.
+            throw TransportFailure.classify(error)
         }
 
         try Self.checkStatus(response.statusCode)

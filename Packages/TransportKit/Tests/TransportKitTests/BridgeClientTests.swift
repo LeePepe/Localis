@@ -677,6 +677,28 @@ struct BridgeClientTests {
         }
     }
 
+    /// A rejected certificate must survive the trip out of `BridgeClient`.
+    ///
+    /// **Asserted here rather than only on the mapping function.** A correct
+    /// `TransportFailure.classify` that no call site consults is dead code, and
+    /// its own tests would pass exactly as well — the failure this guards is
+    /// not "the rule is wrong" but "the rule is not wired in". Paired with
+    /// `transportFailureIsUnreachable` above deliberately: together they show
+    /// the two answers are actually distinguished, where either alone is also
+    /// satisfied by a client that returns one constant.
+    ///
+    /// The user-visible stake: `.unreachable` reads as "your Mac is asleep",
+    /// which sends someone to check a router while their host is presenting a
+    /// key they never pinned (#34).
+    @Test("a rejected certificate reaches the caller as a pin mismatch")
+    func certificateFailureIsPinMismatch() async throws {
+        let http = StubStreamingHTTP(responses: [.failure(URLError(.serverCertificateUntrusted))])
+
+        await #expect(throws: LocalisError.certificatePinMismatch) {
+            _ = try await Self.client(http).models()
+        }
+    }
+
     @Test("a failure mid-stream surfaces as a lost connection, not as a crash")
     func midStreamFailure() async throws {
         let http = StubStreamingHTTP(responses: [.streamThenFail(
