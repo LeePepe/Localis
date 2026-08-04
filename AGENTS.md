@@ -134,6 +134,7 @@ Instances we actually hit, so you can recognise the family:
 | A green wiring check | Its filter matched nothing (`comm -23` against an empty file) |
 | `exit 0` from `xcodebuild` | Destination matched no device; nothing compiled, and a stale `.app` was still on disk |
 | `swiftlint` reporting no violations | `swiftlint` was not on `PATH`; the hook skipped its only gate in silence |
+| `swiftlint --strict` clean on a test file | `.swiftlint.yml` excludes every test directory — a planted force-unwrap gave the same `rc=0` and the same empty output |
 | `Test run with 0 tests` | `--filter` matched nothing, and the runner exits 0 for that |
 | A green test named for a rule | It asserted the rule's *neighbour*; mutating the rule left it green |
 | `142 started / 1 passed` | The "1 passed" was an empty XCTest shell; the real suite crashed before finishing |
@@ -331,6 +332,16 @@ The rules that come out of this, in order of how often they save us:
    and all read like properties of *(object)*. Cite refs, not line numbers.
 5. **Say what you verified and what you did not.** "No issues found" and "not
    checked" look identical downstream, and the first one ends the investigation.
+
+   And when a result you already reported turns out to be empty, **retract it
+   quickly rather than carefully**. Someone reported a lint run clean, later
+   found the tool had been excluded from that directory, and withdrew it at
+   once — noting that the cost of retracting is one person's credibility, while
+   the cost of leaving it is a merge decision made on a reading of nothing. The
+   asymmetry is what decides, not the awkwardness.
+
+   Praising the courage of an admission gets this backwards. Withdrawing a bad
+   reading is an engineering act with a measurable downstream effect.
 6. **Carry the premise with the conclusion.** "X shouldn't be deleted" and "X
    shouldn't be deleted, and I have not looked at whether anyone is deleting it"
    lead to different actions. Second-hand advice arrives stripped of its
@@ -485,6 +496,22 @@ The rules that come out of this, in order of how often they save us:
     over comments that state a mechanism, because a measurement carries its own
     provenance and a mechanism does not.
 
+    A comment carrying its own expiry condition is better still — and the
+    condition has to guard what the comment is *about*, not something adjacent.
+    One note here warned that four cases were constructed only by tests, with
+    no live path driving them, and set its trigger as *"delete when a production
+    caller constructs `.unreachable(reason:)`."* A later change added exactly
+    such a caller while leaving the value still going nowhere near the UI, so
+    the trigger fired and the warning was still true. Anyone following it would
+    have deleted a live warning **with justification**.
+
+    The sharpest part is that the same paragraph predicted the trap: it said the
+    coming change would make the case *reportable* without making it *produced*,
+    "which reads like the wiring is done" — and then chose a trigger that tests
+    only for produced. **The warning was right and the criterion was narrower
+    than the warning.** Write the condition against the sentence you actually
+    wrote, and make it answerable by one command.
+
     Propagation is the second-order problem; some comments are simply **wrong
     when written**. One here gave three reasons for a type's placement: that
     `LocalisUI` cannot depend on `LocalisModels` (`Package.swift:18` lists it),
@@ -525,6 +552,16 @@ The rules that come out of this, in order of how often they save us:
     search scope out loud next to the conclusion, and ask whether the thing
     you are claiming does not exist could live outside it. Absence of evidence
     is the one result whose reliability is invisible in its own output.
+
+    **The tree you searched is the second hidden argument.** A `grep` does not
+    print `HEAD`, and a green check does not name its base SHA — so a reading
+    taken from a stale worktree is real, self-consistent, and about a world
+    that no longer exists. Both happened here within an hour: a search over a
+    tree sixteen commits behind reported zero hits for a symbol that had three,
+    and nine passing checks turned out to describe a branch that predated the
+    other half of its own feature. Cite the ref alongside the scope — *"three
+    hits, `Packages/*/Sources`, at `0bf1765`"* — and the disagreement surfaces
+    immediately instead of turning into "one of us must have looked wrong."
 
     A sharper version of the same failure: the command that got reported was
     not the command that ran. The real one ended `| grep -v onTermination |
@@ -752,6 +789,61 @@ The rules that come out of this, in order of how often they save us:
     package sweep was this too: not a run that printed nothing, but a package
     that never compiled. Declining to count it as a pass was right; not
     investigating it let the same cause run loose for hours.
+27. **A test can go vacuous because the world moved, and it keeps its name.**
+    A privacy test seeded an error with a fake path and hostname, then asserted
+    the rendered output contained neither. A later change routed that error
+    code to a case carrying **no payload at all** — so all five "must not
+    appear" assertions held for the reason that nothing was there to appear in.
+    Still green, still called *nothing but domain and code rides out*, and now
+    guarding nothing.
+
+    The tell was mundane: a change that should have affected it, and it stayed
+    green. **"I changed the world under this test and it did not notice" is the
+    strongest signal available that it was never watching.** Follow it before
+    concluding the change was safe.
+
+    Repairing the input only fixes today. Add the precondition that would have
+    caught it — `try #require(error.diagnostic != nil)` in front of the
+    assertions — so the next time the routing moves, the test **fails** rather
+    than quietly passing on an empty subject. Negative assertions need this
+    most: an assertion that something is absent is satisfied by an absent
+    universe.
+28. **A fixture can move a test onto a different question.** A check meant to
+    prove that unknown reachability does not block connecting would, built on an
+    unpaired fixture, pass under either version of the rule — it would be
+    measuring pairing, not reachability, and saying nothing about the thing in
+    its own name. Mutation testing does not catch this: the wrong-fixture test
+    fails under the mutant too, for its own unrelated reason.
+
+    What catches it is a positive control **inside the test**: assert the
+    fixture really is connectable before asserting reachability does not block
+    it. One line, and it converts "this passed" into "this passed for the
+    reason claimed."
+
+    The same audit turned up the more common form of the problem: **every
+    existing assertion on that property was negative.** Seven tests asserted it
+    was false, none that it was true through the type under test, so replacing
+    the rule with a wrong one left all seven green. When adding a rule, count
+    the assertions on each side — a property with no positive case is a
+    property that can be broken in one direction silently.
+29. **Two branches that are each green have never met.** Two halves of one
+    feature, developed in parallel, both passed CI — and the second branch was
+    three commits behind the merge that added the first, so **the two halves
+    had never been compiled in the same tree.** Rebasing first is not a
+    formality: if they conflict, that conflict belongs on the branch, where it
+    is one person's problem, rather than on `main`, where it looks like the
+    merge broke something.
+
+    This is #32's shape moved earlier in time — two sides individually correct,
+    the seam between them never exercised — and it is cheaper here, because the
+    compiler will say so within a minute.
+
+    The same day this rule was written, checking a teammate's claim from a
+    working tree **sixteen commits behind `main`** produced zero hits for a
+    symbol that had three, and the reply "I can't see those call sites" was one
+    step away. `git log HEAD..origin/main --oneline | wc -l` costs nothing.
+    Everyone here has now been asked to run it; the person writing this had not
+    run it on themselves.
 
 ## Hooks
 
@@ -763,6 +855,19 @@ git config core.hooksPath scripts/hooks
 **incremental** `swift build && swift test` for each touched `Packages/<X>` (and
 runs `scripts/check-frontmatter.sh` when any `tech-context.md` changed). Layers
 you didn't touch are not built.
+
+**SwiftLint never sees test code.** `.swiftlint.yml` excludes `LocalisTests` and
+`Packages/*/Tests`, so linting a test file is green by construction — and the
+hook reports that as `lint skipped`, which is accurate but easy to read as
+"nothing to complain about." Someone relied on the sentence above this one,
+ran `swiftlint --strict` against a new test file, got `rc=0` with no output,
+and reported it clean; a deliberate force-unwrap planted in the same file
+produced the identical result. **For a change that lives in tests, the lint
+step is silent by design and the guarantees have to come from the tests.**
+
+The table above already has a row for `swiftlint` missing from `PATH`. This is
+the same output with a different cause, and unlike the `PATH` case it is not
+intermittent: it applies every time anyone touches a test.
 
 ## TestFlight
 
@@ -802,6 +907,12 @@ testflight → Run workflow with `force=true`.
   the TransportKit boundary and carries a `userMessage`.
 - **Conventional commits** (`feat:`, `fix:`, `refactor:`, `chore:` …), no AI
   attribution.
+- **Stage by naming files, not `git add -A`.** Probes, mutants and misplaced
+  copies live in the working tree during any serious investigation, and `-A`
+  sweeps them into the commit. One stray file this week was a duplicate of a
+  real source file left by a mis-targeted `cp` — reviewed casually, it reads as
+  deliberate. Naming each path costs a few seconds and makes "what is in this
+  commit" a decision rather than a side effect.
 - **Never write a task number as `(#NN)` in a commit subject — write `task
   #NN`.** Task numbers come from the local task list; GitHub has never heard of
   them, and issues and pull requests share one numbering space there. A subject
