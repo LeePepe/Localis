@@ -535,6 +535,22 @@ The rules that come out of this, in order of how often they save us:
     sourced. **Quote the command you actually ran, pipes included; if you are
     summarising, say "summarising."** A cleaned-up command reads as evidence
     and is memory.
+
+    Two more limits on the same tool, both of which produced wrong counts that
+    a ruling then rested on. **A hand-written pattern covers the forms its
+    author thought of**: four alternations for "a bare `.unreachable`" missed
+    the one inside an array literal, so the count came out 11 against the
+    compiler's 16. And **grep counts strings, not usages** — `.unreachable`
+    names cases in two different enums here, so no amount of pattern-polishing
+    separates them.
+
+    When the number is going to decide something, **let the compiler count**:
+    make the change and read the errors. It knows the difference between two
+    identically spelled cases and a pattern never will. (Related: the audit
+    that found this also found two sites where the "mechanical" fix was not —
+    `#expect(throws: LocalisError.unreachable)` becoming `.unreachable()`
+    silently asserts the *absence* of a diagnostic, so the test would fail for
+    a reason unrelated to its name.)
 17. **An acceptance run that is allowed to do what the user cannot is not an
     acceptance run.** The unpair suite passed end to end — revoke, restart the
     bridge, watch the token get `401 token_revoked`. Restarting is not part of
@@ -673,6 +689,69 @@ The rules that come out of this, in order of how often they save us:
     finding from the old one: an exemption pinned to the original commit does
     not cover the squashed copy. Check what the merge would introduce before
     merging, not after.
+23. **CI runs on `main` and on pull requests targeting it. Nothing else.**
+    Read the `on:` block once rather than assuming: a long-lived branch here
+    accumulated thirty commits, a hundred and sixty tests and a full acceptance
+    script **without a single CI run**, and a pull request between two
+    non-`main` branches reports "no checks reported" — which looks like the
+    checks are queued.
+
+    So "it's green on that branch" means one person's local machine said so,
+    which is the same standing as an unrun test. Worth stating plainly because
+    branch protection, required checks and a healthy-looking Actions tab all
+    describe `main`, and none of them says anything about where the work
+    actually is.
+24. **One sample cannot tell a mapping from a constant.** A test injecting one
+    error and asserting one diagnostic passes equally against an implementation
+    that hardcodes that diagnostic. Two distinct inputs with distinct expected
+    outputs is the smallest thing that distinguishes them — the same reason
+    `probe` returning a `Bool` and `isAvailable` reading always-true went
+    unnoticed for so long.
+
+    Two related shapes from the same review, both about tests that pass without
+    discriminating:
+
+    **Fixing a catch-all can create a narrower catch-all.** Mapping only
+    `URLError` and defaulting everything else preserves exactly the collapse
+    being repaired — and hides better, because its blind spot is precisely the
+    domains nobody thinks to test.
+
+    **Assert that nothing forbidden appears, not that the expected fields are
+    right.** Whitelisting fields passes a future field that happens to carry a
+    path; asserting the rendered output contains no `/Users`, no hostname, no
+    port survives additions nobody has written yet.
+
+    And pick test data that only one side can produce. An assertion that port
+    `8443` never appears in a diagnostic is worthless if the client under test
+    also uses `8443` — the value would then have two possible sources, and the
+    assertion reads whichever arrived. Same failure as three probes sharing one
+    exit code, relocated into the fixtures.
+25. **A round-trip test is blind to the damage that matters.** Encode then
+    decode in the same build and everything agrees with itself — including a
+    build that has started writing `{"diagnostic":null}` where older ones write
+    nothing. Compatibility asks whether *another* build can read what this one
+    writes, and a round-trip is silent on that while looking exactly like a
+    serialisation test.
+
+    Assert the bytes. Adding an optional associated value to a persisted enum
+    turned out to change nothing (Swift omits it rather than emitting `null`),
+    but that was measured against a recorded encoding and pinned with a
+    mutation that produced the predicted `{"diagnostic":null}` — not assumed
+    from the round-trip passing.
+26. **A stale build cache fails in the shape of a crash.** `signal code 11`
+    from a test run reads as a runtime crash — the one failure that seems
+    least likely to be a compile problem, so it is the least likely to prompt
+    "did this even build?" Twice in one session it was `.build` holding
+    artefacts from a stashed tree: once the real error was a missing type, once
+    a manifest still listing a file that had been stashed away.
+
+    Compile error, cache mismatch, and genuine crash are one exit code, and the
+    person seeing them is usually holding an unverified change — so every red
+    looks like theirs. Before attributing a failure to your diff, `rm -rf
+    .build` and re-run. And note that the earlier "silent output" from a
+    package sweep was this too: not a run that printed nothing, but a package
+    that never compiled. Declining to count it as a pass was right; not
+    investigating it let the same cause run loose for hours.
 
 ## Hooks
 
