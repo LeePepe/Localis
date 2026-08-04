@@ -41,18 +41,39 @@ enum TransportFailure {
              .clientCertificateRejected,
              .clientCertificateRequired,
              .secureConnectionFailed:
-            // The handshake was refused on the certificate itself. For a bridge
-            // this always means the pin: its certificate is self-signed, so the
-            // system's default policy rejects the *correct* certificate too —
-            // reaching here at all means our pinning delegate did not get to
-            // decide, or decided against.
+            // **These seven are unreachable today, and that is the point.**
+            //
+            // Measured 2026-08-04: a pin our delegate refuses surfaces as
+            // `.cancelled` (-999), never as one of these. What produces these is
+            // the *system's* default policy rejecting the certificate — which
+            // only happens when the delegate was never consulted at all. A
+            // bridge's certificate is self-signed, so the default policy rejects
+            // the correct one just as readily.
+            //
+            // That is the exact shape of #32, where the streamed path skipped
+            // the pinning delegate and every request came back -1202. So this
+            // branch is not dead code to be tidied away: it is the detector that
+            // fires if pinning comes unwired again. Deleting it because "none of
+            // these can occur" removes the only thing that would notice when
+            // they start occurring — and the user would go back to being told
+            // their Mac is not answering.
             return .certificatePinMismatch
 
         case .cancelled:
-            // Reported for every cancellation, including our pinning delegate
-            // refusing a challenge. `.cancelled` is true under either reading;
-            // claiming the pin failed would be a guess, and claiming the host
-            // is offline (the old behaviour) is false under both.
+            // Two different events arrive here as the same code, measured
+            // 2026-08-04: a user cancelling an in-flight request, and our
+            // pinning delegate refusing a challenge. `URLError` carries nothing
+            // that separates them.
+            //
+            // `.cancelled` is true under either reading. Calling it a pin
+            // failure would be a guess, and — since `certificatePinMismatch`
+            // raises a persisted security alert — a guess that tells someone
+            // who tapped Stop that their Mac may be impersonated. Calling it
+            // `.unreachable` (the old behaviour) is false under both.
+            //
+            // Saying only what is certain costs a real diagnosis: a refused pin
+            // currently reports as a cancellation. Recovering it needs the
+            // delegate to say what it did, which is its own change.
             return .cancelled
 
         default:
