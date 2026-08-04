@@ -97,7 +97,7 @@ enum LocalTLSServer {
         case securityAPIFailed(String, OSStatus)
         case identityUnavailable(String)
         case pinUnavailable
-        case listenerFailed
+        case listenerFailed(lastState: String)
 
         var description: String {
             switch self {
@@ -113,8 +113,8 @@ enum LocalTLSServer {
                 return "could not build a SecIdentity: \(reason)"
             case .pinUnavailable:
                 return "SPKIPinning.spkiHash could not read the generated certificate"
-            case .listenerFailed:
-                return "NWListener never reached .ready"
+            case .listenerFailed(let lastState):
+                return "NWListener never reached .ready — it \(lastState)"
             }
         }
     }
@@ -178,12 +178,24 @@ enum LocalTLSServer {
     /// Semaphore rather than a continuation because `start(...)` is
     /// synchronous: a test that has to `await` its fixture setup reads as
     /// though the setup is part of what is being measured.
+    ///
+    /// The failure carries the last state seen, because the three ways this
+    /// gives up are three different problems and they were previously
+    /// indistinguishable. `.failed(error)` says the OS refused the bind and
+    /// names why; `.waiting(error)` is a listener still asking for something it
+    /// has not been given; a plain timeout with no state at all is a listener
+    /// that never called back. Reporting all three as "never reached .ready"
+    /// leaves whoever hits it in CI with nothing to act on — measured, on this
+    /// harness's first CI run.
     private static func awaitReady(_ listener: NWListener) throws -> UInt16 {
         let ready = DispatchSemaphore(value: 0)
         let bound = Locked<UInt16?>(nil)
         let fired = Locked<Bool>(false)
+        let lastState = Locked<String>("no state update was delivered")
 
         listener.stateUpdateHandler = { state in
+            lastState.set(Self.describe(state))
+
             let alreadyFired = fired.mutate { was -> Bool in
                 defer { was = true }
                 return was
@@ -205,9 +217,23 @@ enum LocalTLSServer {
 
         guard ready.wait(timeout: .now() + 10) == .success, let port = bound.get() else {
             listener.cancel()
-            throw SetupFailure.listenerFailed
+            throw SetupFailure.listenerFailed(lastState: lastState.get())
         }
         return port
+    }
+
+    /// The listener state in a form a failure message can carry. `NWError`'s
+    /// own description names the POSIX/DNS code, which is the part that
+    /// distinguishes "the sandbox refused the bind" from "the port was taken".
+    private static func describe(_ state: NWListener.State) -> String {
+        switch state {
+        case .setup: return "still in .setup"
+        case .waiting(let error): return "stuck in .waiting(\(error))"
+        case .ready: return "reached .ready"
+        case .failed(let error): return "failed with \(error)"
+        case .cancelled: return "was cancelled"
+        @unknown default: return "an unknown state"
+        }
     }
 
     // MARK: - Certificate and identity
