@@ -663,3 +663,18 @@ testflight → Run workflow with `force=true`.
   more words and can be falsified on sight by whoever reads it. Same root as
   the numbering collision above: a local number in prose is an assertion
   nothing will ever check for you.
+
+  The same goes for a **symbol** you name from memory. Drafting the ruling
+  above, I cited a test called `HostUnreachableReasonTests` as the thing that
+  would enforce it. No such type exists; the suite is
+  `HostUnreachableReasonWordingTests`. Written into a comment, it fails worse
+  than the bad task number: a wrong task number lands you on a real task, but a
+  name that matches nothing returns an empty grep, and **an empty grep reads as
+  your own mistake** — wrong flags, wrong path, wrong spelling, each of which
+  has genuinely bitten someone here. The absence of the evidence gets charged
+  to whoever went looking for it.
+
+  So paste identifiers from the file, never from memory — and if a claim in
+  your own draft names something, grep it before someone builds on it. The
+  reviewer caught this one, in a ruling whose entire subject was references
+  that nothing validates.
