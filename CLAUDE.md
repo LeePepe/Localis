@@ -35,6 +35,24 @@ minutes slower and tells you nothing `swift test` didn't.
 Run `xcodebuild` in the background with a long timeout — the first SPM resolve
 can take several minutes.
 
+### swift-testing: `--filter` takes identifiers, the output prints display names
+
+Two different alphabets, and the asymmetry caught three people in one day —
+once in each direction:
+
+```bash
+swift test --filter "A real bridge over real TLS"   # display name → matches nothing
+swift test --filter LiveBridgeIntegrationTests      # type name → runs
+```
+
+A `--filter` matching nothing prints **`Test run with 0 tests ... passed`** and
+exits 0 — the same words a real run produces. In the other direction, grepping
+the output for a `func` name finds nothing, because what is printed is the
+`@Test("…")` string; that one reads as "my tests did not run" when they did.
+
+Filter by identifier, grep results by display name, and treat any run reporting
+zero tests as a run that did not happen.
+
 ### Addressing a simulator: use the UDID, never the name
 
 Both of these fail for reasons that have nothing to do with your code, and both
