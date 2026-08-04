@@ -21,7 +21,31 @@ struct Bridge {
             // routinely quotes a path, and stderr here may be a shared terminal
             // or a log.
             FileHandle.standardError.write(Data("localis-bridge: failed to start\n".utf8))
+            // …but "failed to start" alone leaves the operator with nothing to
+            // do. A few failures have a remedy that can be named without
+            // naming anything sensitive, so they get one line more. The text is
+            // written here rather than taken from the error for the same reason
+            // the line above is fixed.
+            if let remedy = Self.remedy(for: error) {
+                FileHandle.standardError.write(Data("localis-bridge: \(remedy)\n".utf8))
+            }
             exit(1)
+        }
+    }
+
+    /// What the operator can do about a start-up failure, when that is sayable.
+    ///
+    /// nil for everything else — a guess would be worse than silence, and the
+    /// fixed line above has already said the bridge is not running.
+    private static func remedy(for error: any Error) -> String? {
+        switch error {
+        case TokenStore.Failure.unreadableGrants:
+            // Deliberately not repaired on the bridge's own initiative:
+            // replacing the file would unpair every device on this Mac
+            // silently. Saying so turns a mystery into an instruction.
+            return "the pairing record is damaged; delete it and pair this Mac again"
+        default:
+            return nil
         }
     }
 
@@ -37,6 +61,14 @@ struct Bridge {
         // Separate from the pin on purpose — see `BridgeInstanceID`. Reusing
         // the pin here would make the contract's clone rule unfireable.
         let instanceID = try BridgeInstanceID.loadOrCreate(in: home)
+
+        // Pairing survives the process. A grant ends when the user unpairs
+        // (FR-027) or the certificate changes (constitution §V); a restart is
+        // neither. `throws` on a corrupt file rather than starting empty —
+        // starting empty would unpair every device on this Mac without anyone
+        // having asked, and the user would see only that their phone stopped
+        // connecting.
+        let tokens = try TokenStore(directory: home)
 
         let claudePath = resolveClaude()
 
@@ -57,7 +89,7 @@ struct Bridge {
         let handler = BridgeHandler(
             catalog: catalog,
             runners: runners,
-            tokens: TokenStore(),
+            tokens: tokens,
             coordinator: TurnCoordinator(sessions: SessionStore()),
             bridgeName: machineName,
             bridgeID: instanceID
