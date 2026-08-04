@@ -84,14 +84,17 @@ API key、OpenAI key、任何 CLI 工具的登录态 / OAuth refresh token。
 - 流式增量（token delta）通过**追加产生新快照**表达，UI 只读快照，不持有可变缓冲。
 - 状态机（idle / connecting / streaming / error）是显式 enum，不用一堆 Bool 拼状态。
 
-### VII. 范围克制：iOS 优先，Bridge 独立交付
+### VII. 范围克制：iOS 优先，Bridge 同仓交付
 
 当前阶段：**iOS 是唯一 app target**。
 
 - 不立项 macOS / watchOS / visionOS app target。
-- Mac bridge daemon 是**独立交付物**（`localis-bridge`），本仓库只维护
-  **协议契约**（`specs/001-localis-core/contracts/`）与 iOS 侧实现。
-- 本仓库的 CI / TestFlight 只对 iOS app 负责。
+- Mac bridge daemon（`localis-bridge`）**在本仓库**，位于顶层 `bridge/`，与 iOS
+  app target 并列（**ADR-0001**，2026-08-04 修订；原为独立仓库）。它不是 SPM 包、
+  不进 `Packages/`、不被任何 iOS target 链接，也不参与 `xcodegen generate`。
+- **`bridge/` 与 `Packages/` 互不依赖**：两侧都依赖
+  `specs/001-localis-core/contracts/`（唯一契约真源），彼此不引用。
+- 本仓库的 CI 对 iOS app **与** bridge 负责；TestFlight 仍只打包 iOS app。
 - 重启上述任一冻结项需新 ADR。
 
 ---
@@ -131,4 +134,7 @@ reviewer / TL 的唯一权威 finding 源。
 - 版本语义：MAJOR = 删除/重定义原则；MINOR = 新增原则或章节；PATCH = 措辞澄清。
 - 所有 PR / review 必须验证合宪。复杂度必须被论证（见 plan 的 Complexity Tracking 表）。
 
-**Version**: 1.0.0 | **Ratified**: 2026-08-03 | **Last Amended**: 2026-08-03
+**Version**: 2.0.0 | **Ratified**: 2026-08-03 | **Last Amended**: 2026-08-04
+
+<!-- 2.0.0 — ADR-0001: §VII 重定义，localis-bridge 从「独立仓库」改为「本仓库
+     顶层 bridge/」。MAJOR 因为它重定义了一条既有原则（见版本语义），而非新增。 -->
