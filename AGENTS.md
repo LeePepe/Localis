@@ -1026,6 +1026,27 @@ testflight → Run workflow with `force=true`.
   your name into `owner` and your branch name into the task, so the next person
   gets an answer instead of an inference.
 
+  **The same asymmetry runs the other way, while you wait.** A message is a
+  snapshot of what its sender knew when they sent it, and **nothing that
+  happens afterwards is retracted from it**. So "I am waiting for an answer"
+  and "the answer was given, to someone else, or before I asked" look
+  identical from inside the inbox. That happened at least six times in one day
+  here: three questions about matters already ruled on, two about an approval
+  already granted three times, and once a teammate held work believing a
+  decision was pending, when it had been dispatched to someone else. The third
+  approval arrived after the pull request it approved had already merged.
+
+  **The fix is not "communicate more" — it is that waiting has a second
+  source.** Task `owner`, the task description, `gh pr view` state, and
+  `git branch -r` are all newer than any message about them, and none of them
+  can be stale in the way an inbox is. So: **when you have been waiting on a
+  reply, read the task description before asking again.** If a decision was
+  made, it is recorded there — team-lead now writes rulings into the task as
+  well as replying — and if the work you are waiting to start already has a
+  branch or a merged pull request, that is the answer too. Ask again only
+  after all four come back empty; then say what you already checked, so the
+  reply does not repeat what you have.
+
 - **When a comment cites a task number, say what that task promises.** Task
   numbers are local, so nothing validates a reference to one — not the
   compiler, not CI, not the task tool. A comment reading "#30 tracks giving
