@@ -141,6 +141,50 @@ struct ClaudeStreamDecoderTests {
         #expect(ClaudeStreamDecoder.decode(line: "   ").isEmpty)
     }
 
+    /// **Found by running the real CLI, not by reading its docs.** A live turn
+    /// emits an `assistant` frame carrying the whole assembled message after
+    /// the deltas that composed it have already been sent. Forwarding it would
+    /// deliver the reply twice: streamed, then again in full.
+    @Test("the assembled assistant message is not re-sent as content")
+    func assembledMessageIsNotResent() {
+        let line = """
+        {"type":"assistant","message":{"content":[{"type":"text","text":"hello world"}]},"session_id":"s"}
+        """
+
+        let outputs = ClaudeStreamDecoder.decode(line: line)
+
+        #expect(outputs.isEmpty)
+    }
+
+    /// Also from a live run: the CLI narrates its own activity on this machine
+    /// — local hooks firing, notifications, status. None of it is conversation.
+    ///
+    /// Asserted as *silence* rather than as skips: reporting six frames per
+    /// turn as unreadable would bury a genuine dialect change under routine
+    /// noise, which is how a real mismatch goes unnoticed.
+    @Test("the CLI's own activity frames are dropped silently", arguments: [
+        "hook_started", "hook_response", "notification", "status",
+    ])
+    func activityFramesAreSilent(subtype: String) {
+        let line = #"{"type":"system","subtype":"\#(subtype)","session_id":"s"}"#
+
+        #expect(ClaudeStreamDecoder.decode(line: line).isEmpty)
+    }
+
+    /// The counterpart to the two tests above: dropping known-uninteresting
+    /// frames must not become dropping everything. An unrecognised `system`
+    /// subtype is still reported, so a new one shows up as a skip rather than
+    /// as silence.
+    @Test("an unknown system subtype is still reported")
+    func unknownSystemSubtypeIsReported() throws {
+        let line = #"{"type":"system","subtype":"something_new","session_id":"s"}"#
+
+        let outputs = ClaudeStreamDecoder.decode(line: line)
+        let reason = try #require(outputs.compactMap(\.skipReason).first)
+
+        #expect(reason == .unknownType)
+    }
+
     // MARK: - Helpers
 
     private func decodeFixture() -> [ClaudeStreamOutput] {

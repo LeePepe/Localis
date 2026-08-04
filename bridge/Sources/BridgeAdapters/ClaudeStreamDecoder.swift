@@ -80,6 +80,12 @@ public enum ClaudeStreamDecoder {
             return decodeStreamEvent(frame)
         case "result":
             return decodeResult(frame)
+        case "assistant", "user":
+            // The assembled message, sent once the deltas that composed it have
+            // already gone out. Forwarding it would deliver the reply a second
+            // time — the whole text, immediately after the streamed version.
+            // Dropped knowingly rather than reported as unreadable.
+            return []
         default:
             return [.skipped(.unknownType)]
         }
@@ -92,13 +98,27 @@ public enum ClaudeStreamDecoder {
     /// The rest of it describes the local machine — working directory, tool
     /// inventory, model settings. None of that is looked at, which is the point:
     /// a field never read is a field that cannot leak (constitution I).
+    ///
+    /// The other `system` subtypes are the CLI's own activity, observed on a
+    /// real run: `hook_started` / `hook_response` (the user's local hooks
+    /// firing), `notification`, and `status`. They describe this machine rather
+    /// than the conversation, so they are dropped rather than reported as
+    /// unreadable — a real dialect change would otherwise arrive buried in a
+    /// steady stream of false alarms.
     private static func decodeSystem(_ frame: [String: Any]) -> [ClaudeStreamOutput] {
-        guard frame["subtype"] as? String == "init",
-              let sessionID = frame["session_id"] as? String
-        else {
+        switch frame["subtype"] as? String {
+        case "init":
+            guard let sessionID = frame["session_id"] as? String else {
+                return [.skipped(.unknownType)]
+            }
+            return [.session(sessionID)]
+
+        case "hook_started", "hook_response", "notification", "status":
+            return []
+
+        default:
             return [.skipped(.unknownType)]
         }
-        return [.session(sessionID)]
     }
 
     private static func decodeStreamEvent(_ frame: [String: Any]) -> [ClaudeStreamOutput] {
