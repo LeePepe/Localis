@@ -218,6 +218,43 @@ struct BridgePairingTests {
         store.removeAll()
     }
 
+    @Test("a Mac that cannot pair right now says so instead of reading as garbage")
+    func pairingBackendUnavailable() async throws {
+        // Contract §6 lists 503 `backend_unavailable` with a required client
+        // behaviour: plain-language message plus a retry action. Flattening it
+        // into `.malformedResponse` loses both — `isRetryable` is true either
+        // way, but the wording sends the user to debug a reply that was
+        // perfectly well-formed and told them exactly what was wrong.
+        //
+        // `BridgeClient` already maps this correctly. Two paths in one package
+        // reading the same table differently is the drift this asserts against.
+        let http = StubHTTP(responses: [.success(
+            status: 503,
+            body: #"{"error":{"code":"backend_unavailable","message":"/Users/someone/Library/whatever"}}"#
+        )])
+        let store = HostCredentialStore(service: Self.testService())
+        let pairing = BridgePairing(http: http, credentials: store)
+
+        do {
+            _ = try await pairing.pair(
+                host: HostID(),
+                endpoint: HostEndpoint(host: "mac.local", port: 8443),
+                code: "000000",
+                presenting: SPKIHash(base64: "AAA="),
+                deviceName: "iPhone",
+                deviceID: UUID()
+            )
+            Issue.record("expected a refusal")
+        } catch {
+            #expect(error as? LocalisError == .backendUnavailable(reason: nil))
+            // The bridge's own `message` may hold an absolute path
+            // (constitution I / FR-025) and must not ride out on the error.
+            #expect(String(describing: error).contains("Users") == false)
+        }
+
+        store.removeAll()
+    }
+
     @Test("five wrong codes each report the code error, then the session dies")
     func fiveFailuresThenInvalid() async throws {
         // The bridge counts, not the client — but the client must render the

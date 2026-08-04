@@ -62,7 +62,14 @@ public struct TurnCursor: Hashable, Codable, Sendable {
     /// The turn check is not redundant with `shouldAccept`. `seq` counts per
     /// turn, so another turn's frame carries numbers in exactly the same range —
     /// comparing sequence alone would let one turn's progress mark another's.
-    /// Prefer this over `shouldAccept` wherever the turn id is at hand.
+    ///
+    /// `incomingTurnID` must come from **outside** this cursor. Passing
+    /// `cursor.turnID` back in makes the first half of the conjunction always
+    /// true, and the call then reads as a turn check while behaving exactly like
+    /// `shouldAccept` — a live instance of that shipped in `BridgeClient`'s
+    /// per-frame loop, where no turn id was available to pass. If the id you
+    /// have is this cursor's own, you do not have one: call `shouldAccept`, and
+    /// check identity where the real id actually arrives.
     public func accepts(turnID incomingTurnID: String, seq: Int) -> Bool {
         incomingTurnID == turnID && shouldAccept(seq: seq)
     }
