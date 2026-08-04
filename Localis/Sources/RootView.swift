@@ -145,6 +145,32 @@ struct RootView: View {
                                     row.status,
                                     tone: row.isConnectable ? .primary : .neutral
                                 )
+                                // FR-060: why this machine is unusable, on the
+                                // host list itself.
+                                //
+                                // **A second line, not a replacement for the
+                                // pill.** The pill carries the pairing
+                                // relationship and this carries the last probe
+                                // result; they are different lifetimes
+                                // (FR-061), and overwriting one with the other
+                                // is how "this Mac's identity changed" gets
+                                // replaced by "isn't answering" the moment the
+                                // machine is switched off.
+                                //
+                                // Absent — not blank — when nothing is known to
+                                // be wrong, so an unprobed host makes no claim.
+                                if let detail = row.unreachableDetail {
+                                    // Rendered through `StatusPill(.danger)`
+                                    // rather than a `Text` with a theme colour:
+                                    // this view holds no `@Environment(\.theme)`
+                                    // and adding one to reach a single colour
+                                    // would put a second place where "what a
+                                    // problem looks like" is decided.
+                                    StatusPill(detail, tone: .danger)
+                                        // The sentences name an action; a
+                                        // truncated one names half of it.
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
                         }
                     }
