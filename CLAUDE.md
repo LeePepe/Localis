@@ -67,6 +67,39 @@ when it is complete`. That is a statement about the tool, not about the logs —
 they exist, and the first command returns them. Do not read it as "the failure
 left no trace" and start guessing from the job's duration instead.
 
+### Merging: this repo has no auto-merge
+
+Every PR here is merged **by hand**. `reviewDecision` is empty on all of them,
+required reviews are not configured, and auto-merge has never been enabled —
+verified against the five most recently merged PRs, not assumed.
+
+This matters because **"waiting for auto-merge" and "nobody has pressed the
+button" look identical**: a green, mergeable PR sitting still. Waiting is the
+default behaviour, so the mistake costs an unbounded amount of time and never
+produces an error. It is also an easy one to import — a sibling repo of this
+project does use auto-merge, and carrying that habit across is exactly how a PR
+ends up parked.
+
+So: when a PR is green and `mergeStateStatus` is `CLEAN`, someone still has to
+merge it.
+
+```bash
+gh pr checks <n>; echo $?     # 0 = all green, 8 = still pending
+```
+
+Read the **exit code**, not the printed table. Three separate misreads of this
+project's CI came from parsing that output — `QUEUED` rows counted as complete
+(giving "0 pending" for a run that had not started), the same rows counted as
+failures, and "no checks reported" read as a failing gate when it meant CI had
+not yet been triggered for a new head. The exit code is not open to
+interpretation.
+
+`gh pr merge --squash --delete-branch` has one failure mode worth knowing: if a
+worktree holds the branch, the merge **succeeds** and only the local-checkout
+step of `--delete-branch` fails — leaving the remote branch alive while the
+command's output reads like an outright failure. Check `git ls-remote` rather
+than the exit status.
+
 It has a worse failure than refusing, too: after a rerun, `gh run view --log`
 returns the **latest attempt's** log rather than the one you asked for. The
 first attempt's crash then looks like it vanished, and "the rerun overwrote the
