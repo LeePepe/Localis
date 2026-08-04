@@ -137,6 +137,18 @@ public struct BridgePairing: Sendable {
             // cases: the fifth wrong attempt read "wrong code, try again",
             // advice that is guaranteed to fail.
             throw LocalisError.pairingSessionExpired
+        case 503:
+            // Contract §6: the Mac answered, and answered *usefully* — it is
+            // just not able to pair right now. `default` used to swallow this
+            // into `malformedResponse`, which sends the user to debug a reply
+            // that was well-formed, and drops the retry affordance §6 requires.
+            //
+            // The reason code is deliberately nil rather than read off the
+            // body. §6's `unavailable_reason` describes which *backend* is
+            // unavailable, and pairing precedes any backend choice — inventing a
+            // per-backend reason here would render wording about a thing the
+            // user has not picked yet.
+            throw LocalisError.backendUnavailable(reason: nil)
         default:
             throw LocalisError.malformedResponse
         }

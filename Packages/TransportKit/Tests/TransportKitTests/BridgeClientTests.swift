@@ -112,7 +112,10 @@ struct BridgeClientTests {
         // three pieces, one of which cuts a multi-byte character in half.
         let frame = #"data: {"seq":0,"choices":[{"delta":{"content":"héllo"},"index":0}]}"# + "\n\n"
         let bytes = Array(frame.utf8)
-        let cut = bytes.firstIndex(of: 0xC3)! + 1   // between the two bytes of "é"
+        // `#require`, not `!`: if the literal above is ever reworded without an
+        // "é" the force unwrap crashes the whole suite, and a crashed run is
+        // read as infrastructure trouble rather than as this test's finding.
+        let cut = try #require(bytes.firstIndex(of: 0xC3)) + 1   // between the two bytes of "é"
 
         let http = StubStreamingHTTP(responses: [.streamBytes(status: 200, headers: [:], chunks: [
             Array(bytes[..<cut]),
@@ -314,6 +317,71 @@ struct BridgeClientTests {
 
         #expect(Self.text(uninterrupted) == "012345")
         #expect(firstHalf + "2" + secondHalf == "012345")
+    }
+
+    @Test("a resume answered by a different turn is refused, not merged")
+    func resumeRejectsAnotherTurn() async throws {
+        // The failure this rules out: `seq` counts *per turn* (contract §3.3),
+        // so another turn's frames carry numbers in exactly the same range. A
+        // client that only compares `seq` would splice a second turn's text
+        // into this one's transcript and advance this turn's cursor past
+        // content it never received — SC-003 broken in both directions at once.
+        //
+        // Refused as a thrown error rather than by dropping the frames: a
+        // stream that yields nothing and ends is indistinguishable from a turn
+        // that finished, and the caller would mark the message complete.
+        let http = StubStreamingHTTP(responses: [.stream(
+            status: 200,
+            headers: ["x-localis-turn-id": "t-OTHER"],
+            body: [
+                #"data: {"seq":43,"choices":[{"delta":{"content":"someone else's"},"index":0}]}"# + "\n\n",
+                "data: [DONE]\n\n",
+            ]
+        )])
+
+        await #expect(throws: LocalisError.malformedResponse) {
+            _ = try await Self.client(http).resume(TurnCursor(turnID: "t-9", lastSeq: 42))
+        }
+    }
+
+    @Test("a resume answered by the right turn still streams")
+    func resumeAcceptsItsOwnTurn() async throws {
+        // The other half of the check above, and not a formality: "refuse
+        // everything" passes the mismatch test on its own, and a resume that
+        // can never succeed is a worse bug than the one being fixed.
+        let http = StubStreamingHTTP(responses: [.stream(
+            status: 200,
+            headers: ["x-localis-turn-id": "t-9"],
+            body: [
+                #"data: {"seq":43,"choices":[{"delta":{"content":"ours"},"index":0}]}"# + "\n\n",
+                "data: [DONE]\n\n",
+            ]
+        )])
+
+        let events = try await Self.collect(Self.client(http).resume(TurnCursor(turnID: "t-9", lastSeq: 42)).events)
+
+        #expect(Self.text(events) == "ours")
+    }
+
+    @Test("a bridge that sends no turn id is trusted rather than refused")
+    func resumeWithoutTurnIDHeader() async throws {
+        // A bridge older than the resume contract omits the header — that is
+        // why `TurnStream.turnID` is optional at all. Refusing on absence would
+        // break resume against every such bridge, and the request was addressed
+        // to `/v1/turns/t-9/resume`, so its routing already names the turn.
+        // "Cannot confirm" is not the same claim as "confirmed wrong".
+        let http = StubStreamingHTTP(responses: [.stream(
+            status: 200,
+            headers: [:],
+            body: [
+                #"data: {"seq":43,"choices":[{"delta":{"content":"ok"},"index":0}]}"# + "\n\n",
+                "data: [DONE]\n\n",
+            ]
+        )])
+
+        let events = try await Self.collect(Self.client(http).resume(TurnCursor(turnID: "t-9", lastSeq: 42)).events)
+
+        #expect(Self.text(events) == "ok")
     }
 
     @Test("an expired turn is retryable, not a dead end")

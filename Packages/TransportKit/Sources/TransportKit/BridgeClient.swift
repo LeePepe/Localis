@@ -141,9 +141,10 @@ public actor BridgeClient: AgentTransport {
 
     // MARK: - Streaming
 
-    /// Opens a stream, checking status and protocol before yielding anything.
+    /// Opens a stream, checking status, protocol and turn identity before
+    /// yielding anything.
     ///
-    /// Both checks happen before the first event on purpose: a turn that is
+    /// All three checks happen before the first event on purpose: a turn that is
     /// going to be refused should be refused as a thrown error, where the caller
     /// has to handle it, rather than as a stream that yields nothing and ends.
     private func openStream(_ request: URLRequest, cursor: TurnCursor?) async throws -> TurnStream {
@@ -151,10 +152,42 @@ public actor BridgeClient: AgentTransport {
 
         try await Self.checkStatus(head, body: body)
 
+        let turnID = head.value(BridgeHeader.turnID)
+        try Self.checkTurnIdentity(turnID, against: cursor)
+
         return TurnStream(
-            turnID: head.value(BridgeHeader.turnID),
+            turnID: turnID,
             events: events(from: body, cursor: cursor)
         )
+    }
+
+    /// Refuses a resume that came back as a *different* turn.
+    ///
+    /// This is the only place turn identity can be checked, and the reason is
+    /// contract §3.3: the id arrives in the response head, once. Individual SSE
+    /// frames carry `seq` but no turn id, so "is this frame from my turn?" is
+    /// not a question a frame can answer — it is settled here for the whole
+    /// stream or not at all.
+    ///
+    /// Why it must be checked somewhere: `seq` counts **per turn**. Another
+    /// turn's frames arrive numbered in exactly the same range, so a client
+    /// comparing sequence alone would splice foreign text into this transcript
+    /// *and* advance this turn's cursor past content it never received — both
+    /// halves of SC-003's "no missing text, no duplicated text", broken at once.
+    ///
+    /// Thrown rather than filtered. Dropping the frames would leave a stream
+    /// that yields nothing and ends cleanly, which the caller cannot tell from
+    /// a turn that finished — it would mark the message complete.
+    ///
+    /// A **missing** header is accepted: a bridge older than the resume contract
+    /// omits it (which is why `TurnStream.turnID` is optional), and the request
+    /// went to `/v1/turns/{id}/resume`, so its routing already names the turn.
+    /// "Cannot confirm" is a different claim from "confirmed wrong", and
+    /// conflating them would break resume against every such bridge.
+    private static func checkTurnIdentity(_ turnID: String?, against cursor: TurnCursor?) throws {
+        guard let cursor, let turnID, turnID != cursor.turnID else { return }
+
+        throw LocalisError.malformedResponse
     }
 
     /// Turns raw bytes into domain events.
@@ -193,12 +226,18 @@ public actor BridgeClient: AgentTransport {
                             return false
                         }
 
-                        // Dedup at the replay boundary. Compared against the
-                        // turn *and* the seq: seq counts per turn, so another
-                        // turn's frame carries numbers in the same range and
-                        // would otherwise advance this turn's cursor.
+                        // Dedup at the replay boundary, on `seq` alone — which
+                        // is all a frame carries. Turn identity is not checked
+                        // here and cannot be: no SSE frame has a turn id
+                        // (contract §3.3 puts it in the response head), so the
+                        // only comparison available at this point would be the
+                        // cursor's own turn against itself. That is what used to
+                        // stand here — `accepts(turnID: current.turnID, …)` —
+                        // and it is always true, so the guard read as a turn
+                        // check while behaving as `shouldAccept`. The real check
+                        // now happens once, at `openStream`, where the id is.
                         if let seq = event.seq, let current = cursor {
-                            guard current.accepts(turnID: current.turnID, seq: seq) else { continue }
+                            guard current.shouldAccept(seq: seq) else { continue }
                             cursor = current.advanced(to: seq)
                         }
 
