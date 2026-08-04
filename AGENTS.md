@@ -332,6 +332,16 @@ The rules that come out of this, in order of how often they save us:
     search scope out loud next to the conclusion, and ask whether the thing
     you are claiming does not exist could live outside it. Absence of evidence
     is the one result whose reliability is invisible in its own output.
+
+    A sharper version of the same failure: the command that got reported was
+    not the command that ran. The real one ended `| grep -v onTermination |
+    head -12`; what went into the message was a tidied version and the claim
+    "only two hits." A teammate re-ran the quoted command, got six, and said
+    so. The conclusion survived — the extra hits were all in `onTermination`
+    too — but for a moment we had a shared baseline that was wrong and looked
+    sourced. **Quote the command you actually ran, pipes included; if you are
+    summarising, say "summarising."** A cleaned-up command reads as evidence
+    and is memory.
 17. **An acceptance run that is allowed to do what the user cannot is not an
     acceptance run.** The unpair suite passed end to end — revoke, restart the
     bridge, watch the token get `401 token_revoked`. Restarting is not part of
