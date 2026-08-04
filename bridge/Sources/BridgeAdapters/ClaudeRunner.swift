@@ -62,19 +62,32 @@ public struct ClaudeRunner: Sendable {
                 _ = handle.availableData
             }
 
-            // One accumulator for the life of the process: a line split across
-            // two reads only rejoins if the same buffer sees both halves.
+            // One accumulator for the life of the process, and one lock that
+            // covers **taking the bytes out of the pipe** as well as decoding
+            // and yielding them. Foundation runs `readabilityHandler` and
+            // `terminationHandler` on separate queues and does not wait for an
+            // in-flight read before firing termination, so the two overlap.
+            //
+            // Locking less than this is not enough, and both narrower versions
+            // were measured failing:
+            //
+            // - Locking only the line buffer leaves the yield outside, so
+            //   termination can finish the stream between a read's `append` and
+            //   its `yield`.
+            // - Locking the decode but reading `availableData` outside it loses
+            //   the same output a different way: the reader takes the bytes,
+            //   termination wins the lock, drains a pipe that is *already
+            //   empty*, and finishes — then the reader's yield lands on a
+            //   finished continuation and is discarded.
+            //
+            // With the read inside, the two orders are both correct: the reader
+            // holds the lock from `availableData` through `yield`, so
+            // termination either waits and finds nothing left, or goes first and
+            // drains everything itself.
             let state = RunState()
 
             stdout.fileHandleForReading.readabilityHandler = { handle in
-                let chunk = handle.availableData
-                guard !chunk.isEmpty else { return }
-
-                for line in state.append(chunk) {
-                    for output in ClaudeStreamDecoder.decode(line: line) {
-                        continuation.yield(output)
-                    }
-                }
+                state.read(from: handle) { continuation.yield($0) }
             }
 
             process.terminationHandler = { process in
@@ -86,22 +99,19 @@ public struct ClaudeRunner: Sendable {
                 // Whatever the last read left unterminated. For claude this is
                 // routinely the `result` frame — usage and the turn's outcome —
                 // which arrives without a trailing newline at EOF.
-                let trailing = stdout.fileHandleForReading.availableData
-                let lines = trailing.isEmpty ? state.flush() : state.append(trailing) + state.flush()
-                for line in lines {
-                    for output in ClaudeStreamDecoder.decode(line: line) {
-                        continuation.yield(output)
-                    }
-                }
+                state.finishing {
+                    state.readLocked(from: stdout.fileHandleForReading) { continuation.yield($0) }
+                    state.flushLocked { continuation.yield($0) }
 
-                // A non-zero exit after a complete stream is still a failed
-                // turn: the decoder's `result` frame may never have arrived, and
-                // finishing normally would leave the client waiting for an end
-                // that is not coming.
-                if process.terminationStatus == 0 {
-                    continuation.finish()
-                } else {
-                    continuation.finish(throwing: Failure.backendError)
+                    // A non-zero exit after a complete stream is still a failed
+                    // turn: the decoder's `result` frame may never have arrived,
+                    // and finishing normally would leave the client waiting for
+                    // an end that is not coming.
+                    if process.terminationStatus == 0 {
+                        continuation.finish()
+                    } else {
+                        continuation.finish(throwing: Failure.backendError)
+                    }
                 }
             }
 
@@ -129,18 +139,49 @@ public struct ClaudeRunner: Sendable {
 /// handler.
 ///
 /// A `final class` with a lock rather than an `actor`: both callers are
-/// synchronous callbacks on Foundation's own queues, and `await`ing from them
-/// is not available. The lock is uncontended in practice — the handlers do not
-/// run concurrently — but "in practice" is not a guarantee Foundation makes.
+/// synchronous callbacks on Foundation's own queues, and `await`ing from them is
+/// not available.
+///
+/// **The lock covers the pipe read, not just the buffer.** Two narrower versions
+/// were written and both lost output under load — see the comment at the call
+/// site for how each one fails. `availableData` is destructive, so a read that
+/// happens outside the critical section can hand its bytes to a caller who then
+/// loses the race to yield them, and the pipe no longer has them for anyone
+/// else. Reading inside makes "who takes the bytes" and "who publishes them" the
+/// same decision.
 private final class RunState: @unchecked Sendable {
     private let lock = NSLock()
     private var accumulator = LineAccumulator()
 
-    func append(_ chunk: Data) -> [String] {
-        lock.withLock { accumulator.append(chunk) }
+    /// Drains the handle, decodes, and yields — all under the lock.
+    func read(from handle: FileHandle, _ yield: (ClaudeStreamOutput) -> Void) {
+        lock.withLock { readLocked(from: handle, yield) }
     }
 
-    func flush() -> [String] {
-        lock.withLock { accumulator.flush() }
+    /// Runs `body` under the lock, so a caller that needs several steps to be
+    /// one atomic unit — drain, flush, finish — gets exactly that.
+    func finishing(_ body: () -> Void) {
+        lock.withLock(body)
+    }
+
+    /// Only from inside `finishing`.
+    func readLocked(from handle: FileHandle, _ yield: (ClaudeStreamOutput) -> Void) {
+        let chunk = handle.availableData
+        guard !chunk.isEmpty else { return }
+
+        for line in accumulator.append(chunk) {
+            for output in ClaudeStreamDecoder.decode(line: line) {
+                yield(output)
+            }
+        }
+    }
+
+    /// Only from inside `finishing`.
+    func flushLocked(_ yield: (ClaudeStreamOutput) -> Void) {
+        for line in accumulator.flush() {
+            for output in ClaudeStreamDecoder.decode(line: line) {
+                yield(output)
+            }
+        }
     }
 }

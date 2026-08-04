@@ -157,6 +157,55 @@ struct ClaudeRunnerProcessTests {
         #expect(FileManager.default.fileExists(atPath: marker.path))
     }
 
+    /// **A race, found by a flaky test rather than by reading the code.**
+    ///
+    /// `readabilityHandler` and `terminationHandler` run on separate Foundation
+    /// queues, and termination does not wait for an in-flight read. When they
+    /// overlap, the turn's `result` frame — which carries its outcome — is lost,
+    /// and the turn ends having never reported how. At the rate it happens that
+    /// presents as an unreliable CLI rather than as a bug here.
+    ///
+    /// **The concurrency is the test.** Run serially this passed 1600 times
+    /// against the broken version: a serial loop leaves the two handlers so far
+    /// apart that they almost never overlap. A first attempt at a fix was
+    /// declared good on exactly that evidence and was wrong — it moved the
+    /// decode inside the lock but left the `availableData` read outside, so the
+    /// reader could take the bytes, lose the lock to termination, and have its
+    /// yield land on a stream that had already finished. 400 concurrent runs
+    /// fail 3 times out of 3 against either broken version and pass against
+    /// this one.
+    @Test("the result frame survives the termination race under load")
+    func resultFrameSurvivesTerminationRace() async throws {
+        let script = try StubCLI(rawScript: """
+        printf '%s\\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":0}'
+        exit 1
+        """)
+        let runner = ClaudeRunner(executable: script.path)
+
+        let lost = await withTaskGroup(of: Bool.self) { group in
+            for _ in 0..<400 {
+                group.addTask {
+                    var sawResult = false
+                    do {
+                        for try await output in runner.run(ClaudeInvocation(prompt: "x")) {
+                            if case .ended = output { sawResult = true }
+                        }
+                    } catch {
+                        // Expected: the stub exits 1. The frame must arrive
+                        // anyway — the throw is the turn's outcome, not a
+                        // licence to lose it.
+                    }
+                    return !sawResult
+                }
+            }
+            var total = 0
+            for await missing in group where missing { total += 1 }
+            return total
+        }
+
+        #expect(lost == 0, "the result frame was lost in \(lost)/400 concurrent runs — the handlers are racing again")
+    }
+
     // MARK: - Helpers
 
     private func collect(from script: StubCLI) async throws -> [ClaudeStreamOutput] {
