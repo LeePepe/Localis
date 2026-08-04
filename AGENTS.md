@@ -121,6 +121,56 @@ gitignored on purpose. Both the CI app job and `fastlane ios beta` run
 add it back: a tracked `.pbxproj` drifts from `project.yml` and turns every PR
 into a merge-conflict review. If it is missing locally, regenerate it.
 
+## The silent pass
+
+Almost every real defect this project has shipped and then caught had the same
+shape: **"nothing happened" was indistinguishable from "everything is fine."**
+Not a wrong answer — an absent one, wearing the costume of a right one.
+
+Instances we actually hit, so you can recognise the family:
+
+| What we saw | What it meant |
+|---|---|
+| A green wiring check | Its filter matched nothing (`comm -23` against an empty file) |
+| `exit 0` from `xcodebuild` | Destination matched no device; nothing compiled, and a stale `.app` was still on disk |
+| `swiftlint` reporting no violations | `swiftlint` was not on `PATH`; the hook skipped its only gate in silence |
+| `Test run with 0 tests` | `--filter` matched nothing, and the runner exits 0 for that |
+| A green test named for a rule | It asserted the rule's *neighbour*; mutating the rule left it green |
+| `142 started / 1 passed` | The "1 passed" was an empty XCTest shell; the real suite crashed before finishing |
+| A test suite covering a function | Its only call site passed a constant, so the check was tautological |
+| A security rule in the contract | `bridge_id` was the SPKI pin, so "same id, different pin" could never occur |
+| An empty session list | The demo seed needs a launch argument; an empty store looks like a broken list |
+| A `MERGED` pull request | Status field said merged; nobody had checked the content landed |
+| Two teammates' reads of the tree | Both true, for different refs, minutes apart |
+
+The rules that come out of this, in order of how often they save us:
+
+1. **Before trusting a "no problem," prove the check can say "problem."** Break
+   the thing on purpose and watch it go red. A verdict that cannot move is not
+   a verdict. This is the single highest-yield habit here.
+2. **A positive control is not optional for anything that gates.** Scripts that
+   gate commits ship with a self-test that must fail. `scripts/check-wiring.sh
+   --self-test` is the pattern.
+3. **"More carefully" is not a fix.** It does nothing for a stale read, a wrong
+   ref, or a misused tool — three things that have each bitten us. Change the
+   procedure, not the diligence.
+4. **Stamp analyses with what they were computed against.** A mutation table, a
+   contract comparison, a CI status — all are properties of *(object, moment)*
+   and all read like properties of *(object)*. Cite refs, not line numbers.
+5. **Say what you verified and what you did not.** "No issues found" and "not
+   checked" look identical downstream, and the first one ends the investigation.
+6. **Carry the premise with the conclusion.** "X shouldn't be deleted" and "X
+   shouldn't be deleted, and I have not looked at whether anyone is deleting it"
+   lead to different actions. Second-hand advice arrives stripped of its
+   caveats unless you restate them.
+7. **When a contract requirement looks unmet, ask who is waiting for the value**
+   before implementing it. Two of Amendment D's five gaps (D4, D5b) were
+   requirements nothing consumed — one of them we nearly staffed as a fix.
+8. **A tidy post-mortem is suspect.** Blame that lands cleanly on one cause has
+   usually been shaped by the story, not the evidence — we had a complete,
+   satisfying account of one incident that turned out to be causally wrong in
+   every link.
+
 ## Hooks
 
 ```bash
