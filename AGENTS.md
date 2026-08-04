@@ -496,6 +496,22 @@ The rules that come out of this, in order of how often they save us:
     over comments that state a mechanism, because a measurement carries its own
     provenance and a mechanism does not.
 
+    A comment carrying its own expiry condition is better still — and the
+    condition has to guard what the comment is *about*, not something adjacent.
+    One note here warned that four cases were constructed only by tests, with
+    no live path driving them, and set its trigger as *"delete when a production
+    caller constructs `.unreachable(reason:)`."* A later change added exactly
+    such a caller while leaving the value still going nowhere near the UI, so
+    the trigger fired and the warning was still true. Anyone following it would
+    have deleted a live warning **with justification**.
+
+    The sharpest part is that the same paragraph predicted the trap: it said the
+    coming change would make the case *reportable* without making it *produced*,
+    "which reads like the wiring is done" — and then chose a trigger that tests
+    only for produced. **The warning was right and the criterion was narrower
+    than the warning.** Write the condition against the sentence you actually
+    wrote, and make it answerable by one command.
+
     Propagation is the second-order problem; some comments are simply **wrong
     when written**. One here gave three reasons for a type's placement: that
     `LocalisUI` cannot depend on `LocalisModels` (`Package.swift:18` lists it),
@@ -536,6 +552,16 @@ The rules that come out of this, in order of how often they save us:
     search scope out loud next to the conclusion, and ask whether the thing
     you are claiming does not exist could live outside it. Absence of evidence
     is the one result whose reliability is invisible in its own output.
+
+    **The tree you searched is the second hidden argument.** A `grep` does not
+    print `HEAD`, and a green check does not name its base SHA — so a reading
+    taken from a stale worktree is real, self-consistent, and about a world
+    that no longer exists. Both happened here within an hour: a search over a
+    tree sixteen commits behind reported zero hits for a symbol that had three,
+    and nine passing checks turned out to describe a branch that predated the
+    other half of its own feature. Cite the ref alongside the scope — *"three
+    hits, `Packages/*/Sources`, at `0bf1765`"* — and the disagreement surfaces
+    immediately instead of turning into "one of us must have looked wrong."
 
     A sharper version of the same failure: the command that got reported was
     not the command that ran. The real one ended `| grep -v onTermination |
