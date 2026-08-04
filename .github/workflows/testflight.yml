@@ -113,6 +113,11 @@ jobs:
             echo "::error::KEYCHAIN_PASSWORD secret is not set (gh secret set KEYCHAIN_PASSWORD)"; exit 1
           fi
           KC="$HOME/Library/Keychains/login.keychain-db"
+          # credential-exposure: argv — `security unlock-keychain` reads the
+          # password from argv or interactively, and there is no stdin form. The
+          # runner is a dedicated machine, so the window is other processes of
+          # the same user on that host. Checked against `security(1)`; if a
+          # `-P`/stdin option ever appears, this becomes removable.
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
           # Disable auto-relock so a long archive isn't locked out mid-run.
           security set-keychain-settings "$KC"
@@ -122,6 +127,11 @@ jobs:
           security list-keychains -d user -s $(printf '%s\n' "$KC" $EXISTING | awk '!seen[$0]++')
           # Allow apple/codesign tools to use the private key without prompting
           # (idempotent — safe to re-run).
+          # credential-exposure: argv — same tool, same constraint as the unlock
+          # above: `-k` takes the password in argv and `security` offers no
+          # alternative. Kept rather than dropped because without the partition
+          # list codesign prompts for the key and the job hangs on a headless
+          # runner.
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" "$KC" >/dev/null 2>&1 || true
 
@@ -147,6 +157,17 @@ jobs:
           set -euo pipefail
           SHA="${{ steps.gate.outputs.latest }}"
           git tag -f testflight/last-released "$SHA"
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            "refs/tags/testflight/last-released"
+          # The token reaches git through the environment, not the remote URL.
+          #
+          # A URL like `https://x-access-token:$TOKEN@github.com/...` puts the
+          # credential in argv, where any process of the same user can read it
+          # from `ps` — and git echoes the remote back in its own error text, so
+          # a push failure prints the token into the run log. The helper below is
+          # single-quoted: argv carries the literal characters `$GH_TOKEN`, and
+          # the value is substituted only inside the helper shell git spawns,
+          # which inherits it from `env:`.
+          git -c credential.helper= \
+              -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' \
+              push -f "https://github.com/${GITHUB_REPOSITORY}.git" \
+              "refs/tags/testflight/last-released"
           echo "✅ testflight/last-released → $SHA"

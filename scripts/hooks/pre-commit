@@ -219,6 +219,33 @@ if echo "$STAGED" | grep -qE '^(Localis/|project\.yml$|scripts/check-wiring\.sh$
   fi
 fi
 
+# ---- 2c. Credentials must not reach a log, a file, an argv or a step output --
+#
+# Triggered by any shell or workflow change, because that is where the criterion
+# applies: a credential's *destination*, not its shape. The checker itself is in
+# the pattern (`\.sh$`), so editing it runs its own self-test.
+#
+# This one blocks with no waiver. The wiring check above has one because it
+# reports a tracked feature gap that a commit cannot reasonably close; a
+# credential arriving in a run log has no such excuse — and an exposure that
+# genuinely has no better form is already expressible in place, as
+# `# credential-exposure: <sink> — <reason>`, which is a decision on the record
+# rather than a list kept somewhere else.
+if echo "$STAGED" | grep -qE '(\.sh$|^scripts/hooks/|^\.github/workflows/)'; then
+  if [ -x scripts/check-script-credentials.sh ]; then
+    if ! bash scripts/check-script-credentials.sh --self-test >/dev/null; then
+      echo "❌ scripts/check-script-credentials.sh can no longer detect a leaked credential."
+      echo "   A credential check that cannot prove it goes red reports the same"
+      echo "   zero as a clean repo. Commit aborted."
+      exit 1
+    fi
+    if ! bash scripts/check-script-credentials.sh; then
+      echo "[pre-commit] ❌ a declared credential's value leaves the variable (see above)."
+      exit 1
+    fi
+  fi
+fi
+
 # ---- 3. Incremental per-layer swift build + test ----------------------------
 # Map staged paths → touched Packages/<X> layers, then build+test each.
 # Fast (SPM, no simulator). Untouched layers are never built.
