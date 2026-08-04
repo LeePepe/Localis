@@ -574,3 +574,18 @@ testflight → Run workflow with `force=true`.
   or a person from automation. To tell a deliberate action from an accidental
   one, use timing (one second apart is not a human decision), `commit_id` on
   the timeline event, and whether the two changes have any files in common.
+
+- **When a comment cites a task number, say what that task promises.** Task
+  numbers are local, so nothing validates a reference to one — not the
+  compiler, not CI, not the task tool. A comment reading "#30 tracks giving
+  `HostUnreachableReason` the missing case" pointed at a task about clearing
+  credentials on a revoked token; the promised work had never been tracked by
+  anything. Following the reference lands on a real, correctly-numbered,
+  *completed* task, so the honest conclusion is "that got done" — **"already
+  handled" and "never existed" read identically, and the error runs toward the
+  reassuring one, which ends the search.**
+
+  `#40 tracks giving probe a return type that can carry a reason` costs four
+  more words and can be falsified on sight by whoever reads it. Same root as
+  the numbering collision above: a local number in prose is an assertion
+  nothing will ever check for you.
