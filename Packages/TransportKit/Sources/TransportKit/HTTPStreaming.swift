@@ -64,7 +64,13 @@ extension PinnedHTTP: HTTPStreaming {
     func stream(
         _ request: URLRequest
     ) async throws -> (HTTPResponseHead, AsyncThrowingStream<[UInt8], Error>) {
-        let (bytes, response) = try await session.bytes(for: request)
+        // `delegate:` is not optional decoration. Without it `bytes(for:)` never
+        // asks the session delegate about the server's trust, so the pin is
+        // skipped and the bridge's self-signed certificate is rejected by the
+        // system's default policy as -1202 (#32). Passing the same delegate the
+        // session holds is what makes the streamed path obey the same pin as
+        // the plain one.
+        let (bytes, response) = try await session.bytes(for: request, delegate: pinnedDelegate)
         guard let http = response as? HTTPURLResponse else {
             throw LocalisError.malformedResponse
         }
