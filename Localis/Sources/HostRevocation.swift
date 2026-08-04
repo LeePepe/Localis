@@ -139,11 +139,11 @@ struct HostRevocation: Sendable {
             //     `TokenStore.revoke(deviceID:)` has no production caller. The
             //     two halves of this feature were each written and each went
             //     green with no line between them.
-            //  2. #32: the `stream` path never invokes the pinning delegate
-            //     (`session.bytes(for:)` does not use the session-level
-            //     delegate that `perform` relies on), and everything except
-            //     pairing goes through `stream`. So the request that would
-            //     carry a 401 back cannot currently be sent at all.
+            //  2. #32: every request except pairing goes through `stream`,
+            //     which did not route the TLS challenge to the pinning
+            //     delegate, so the request that would carry a 401 back could
+            //     not be sent at all. Fixed and merged (#24) — this half is
+            //     now only about the missing route in (1).
             //
             // Delete this note once the unpair route lands — not before,
             // because until then a reader has no way to tell this branch from
@@ -159,12 +159,32 @@ struct HostRevocation: Sendable {
             // does not clear credentials.
             //
             // Reachability: not blocked on bridge the way `.tokenRevoked` is —
-            // a changed certificate needs no cooperation from the far end. It
-            // is blocked on #32 alone, and only partly: `perform` (pairing)
-            // does run the pinning delegate, so a mismatch during pairing
-            // reaches this today. Every later request goes through `stream`,
-            // where the delegate is never invoked, so a certificate that
-            // changes *after* pairing is currently not detected at all.
+            // a changed certificate needs no cooperation from the far end.
+            //
+            // **A previous version of this note carried a false cause, worth
+            // recording because of how it survived.** It said the streamed path
+            // missed the pin because `session.bytes(for:)` "does not use the
+            // session-level delegate that `perform` relies on". Wrong: what
+            // routes the TLS challenge is `PinnedSessionDelegate` conforming to
+            // `URLSessionTaskDelegate` (`PinnedTrust.swift:53`), not which API
+            // is called. Dropping the `delegate:` argument while keeping that
+            // conformance leaves pinning working; the argument is a
+            // compile-time guard so that removing the conformance fails the
+            // build instead of silently unpinning. That was measured against a
+            // real bridge, not read off the code — as was this correction.
+            //
+            // The sentence was copied here from a comment in `HTTPStreaming`.
+            // Fixing the original did not fix this copy, and nothing could have
+            // caught it: wrong code goes red, wrong tests go red, a wrong
+            // comment does nothing at all.
+            //
+            // What is true today: #24 landed the streamed-path fix, so a
+            // certificate that changes *after* pairing is detected. What still
+            // blocks this branch is upstream of pinning — `certificatePinMismatch`
+            // has no production `throw` site, because both request paths funnel
+            // every `NSError` into `.unreachable` (#34, in progress). So this
+            // code is correct and still unreachable; verify its behaviour for
+            // real once #34 lands rather than assuming it from the shape.
             Outcome(clearsCredentials: false) { $0.certificateChanged() }
 
         default:
