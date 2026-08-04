@@ -146,6 +146,7 @@ Instances we actually hit, so you can recognise the family:
 | 538 green tests over a pinned transport | Every one used a fake HTTP client; real TLS had never run, and the pinning delegate was never called on the streaming path |
 | A timely `429 pairing_session_expired` | It was the *consequence* of the previous probe consuming the one-shot code, not the cause of the failure being investigated |
 | Nine references to an error case | All nine were on the receiving side; nothing in production ever throws it, so the handling has never once run |
+| A `#expect` stating the fact you needed | Behind `.enabled(if:)`, and CI feeds none of those variables — last verified by hand, before the fix that changed what it measures |
 | A comment explaining a mechanism | It was wrong, had been copied into another layer, and the copy did not move when the original was fixed |
 
 Those last two are the "half a wire" family, and this project has now found
@@ -254,10 +255,24 @@ The rules that come out of this, in order of how often they save us:
    measure a behaviour, grep the assertions for it.** A live TLS probe was
    stood up to establish that a refused pin surfaces as `-999` rather than a
    certificate error. That exact claim was already a `#expect` in the negative
-   control, with a comment saying so, green on every run that day — and it had
-   been read aloud in the conversation a few messages earlier without anyone
-   noticing it settled the open question. A test is documentation that CI
-   re-verifies daily; it is fresher than any comment and it is searchable.
+   control, with a comment saying so — and it had been read aloud in the
+   conversation a few messages earlier without anyone noticing it settled the
+   open question.
+
+   **Then check the assertion actually runs**, and do not skip this half. That
+   `#expect` sits behind `.enabled(if: LiveBridge.isConfigured)`, and CI sets
+   none of those variables — `grep -rn LOCALIS_BRIDGE .github/workflows/`
+   returns nothing. It had been verified only on the handful of local runs
+   where someone exported a pin by hand, before a fix that changed the very
+   delegate path it measures. "It has been green a dozen times today" was
+   asserted, in this file's own defence of evidence, without being checked.
+
+   So: a gated test is a document that looks verified. A comment at least
+   looks like a comment; a `#expect` looks like something CI re-checks every
+   day, and the two are indistinguishable in `git show`, which shows source
+   and not execution. Read one that cannot run at the confidence level of a
+   comment, not of a test. Which is also why the pinning suite being invisible
+   to CI is its own task (#37) rather than a footnote here.
 10. **Before proposing "point that test at the other branch," check whether the
     other branch already has one.** The suggestion sounds like added coverage
     and can deliver a duplicate — coverage rises, nothing new is guarded.
