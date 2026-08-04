@@ -12,6 +12,13 @@ public enum Route: Sendable, Hashable {
     case pair
     /// `GET /v1/models` (§2).
     case models
+    /// `GET /v1/skills` (Amendment B).
+    ///
+    /// Not in the contract's endpoint list, but `BridgeClient.skills()` calls
+    /// it — and the client is what actually arrives on the socket. A 404 here
+    /// does not surface as "not implemented yet"; `SkillCatalog.decode` gets an
+    /// error body it cannot parse.
+    case skills
     /// `POST /v1/chat/completions` (§3).
     case chatCompletions
     /// `POST /v1/turns/{id}/cancel` (§4).
@@ -71,6 +78,9 @@ public enum Router {
 
         case ["v1", "models"]:
             return method == "GET" ? .models : .methodNotAllowed
+
+        case ["v1", "skills"]:
+            return method == "GET" ? .skills : .methodNotAllowed
 
         case ["v1", "chat", "completions"]:
             return method == "POST" ? .chatCompletions : .methodNotAllowed

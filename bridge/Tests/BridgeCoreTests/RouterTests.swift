@@ -17,10 +17,21 @@ struct RouterTests {
     @Test("the contract's two prefixes both resolve", arguments: [
         ("POST", "/localis/v1/pair", Route.pair),
         ("GET", "/v1/models", .models),
+        ("GET", "/v1/skills", .skills),
         ("POST", "/v1/chat/completions", .chatCompletions),
     ])
     func contractPaths(method: String, path: String, expected: Route) {
         #expect(Router.route(method: method, uri: path) == expected)
+    }
+
+    /// `GET /v1/skills` was found by reading `BridgeClient.skills()`, not the
+    /// contract prose — the client calls it, so it exists whatever the spec
+    /// happens to enumerate. A 404 here does not read as "unimplemented" on the
+    /// iOS side; `SkillCatalog.decode` gets a body it cannot parse.
+    @Test("the skills catalogue the iOS client calls is routed")
+    func skillsRouted() {
+        #expect(Router.route(method: "GET", uri: "/v1/skills") == .skills)
+        #expect(Router.route(method: "POST", uri: "/v1/skills") == .methodNotAllowed)
     }
 
     /// Turn ids appear inside the path, so these routes only work if the router
@@ -60,6 +71,7 @@ struct RouterTests {
     @Test("only pairing is exempt from authentication", arguments: [
         Route.pair,
         .models,
+        .skills,
         .chatCompletions,
         .cancelTurn(id: "t"),
         .resumeTurn(id: "t"),
