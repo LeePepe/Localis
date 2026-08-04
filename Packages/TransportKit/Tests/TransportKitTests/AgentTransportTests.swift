@@ -151,7 +151,7 @@ struct AgentTransportTests {
 
         #expect(stream.turnID == "t-1")
         #expect(received.count == 2)
-        #expect(await transport.probe(AgentBackend(id: "alpha", displayName: "Alpha")))
+        #expect(await transport.probe(AgentBackend(id: "alpha", displayName: "Alpha")) == .reachable)
     }
 }
 
@@ -174,5 +174,5 @@ private struct ScriptedTransport: AgentTransport {
         )
     }
 
-    func probe(_ backend: AgentBackend) async -> Bool { true }
+    func probe(_ backend: AgentBackend) async -> HostReachability { .reachable }
 }

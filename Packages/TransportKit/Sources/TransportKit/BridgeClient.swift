@@ -130,13 +130,51 @@ public actor BridgeClient: AgentTransport {
     /// lists is not available — it was removed, and treating a missing entry as
     /// reachable would offer the user a backend that cannot answer.
     ///
-    /// Any failure reads as "not right now". A probe exists to grey a row out,
-    /// and throwing from it would turn an unreachable host into an error the
-    /// user has to dismiss before seeing the list at all.
-    public func probe(_ backend: AgentBackend) async -> Bool {
-        guard let catalog = try? await models() else { return false }
+    /// Any failure reads as "not right now" — but it now says which kind of
+    /// "not right now" (#40). A probe exists to grey a row out, and throwing
+    /// from it would turn an unreachable host into an error the user has to
+    /// dismiss before seeing the list at all.
+    ///
+    /// **`do`/`catch` rather than `try?`, and the invariant is unchanged.** The
+    /// constraint that matters is that this never throws — that is what keeps
+    /// one unreachable Mac from blocking the whole host list. `try?` enforced it
+    /// by discarding the error, which is also the thing that made the reason
+    /// unrecoverable: `HostUnreachableReason` existed with four cases that no
+    /// production caller could ever construct, because the only code that knew
+    /// which had happened threw the knowledge away one line before returning.
+    /// Catching keeps the guarantee and keeps the cause; the error still does
+    /// not escape.
+    public func probe(_ backend: AgentBackend) async -> HostReachability {
+        let catalog: BackendCatalog
+        do {
+            catalog = try await models()
+        } catch let error as LocalisError {
+            return HostReachability(failure: error)
+        } catch {
+            // `models()` maps everything into `LocalisError` before it escapes
+            // (`AgentTransport.send`'s contract, and `perform`'s catch-all).
+            // Anything here is a break in that guarantee rather than a fact
+            // about the host, so it takes the fallback the mapping gives an
+            // unrecognised failure rather than inventing a more specific claim.
+            return HostReachability(failure: .unreachable)
+        }
 
-        return catalog.backends.first { $0.id == backend.id }?.isAvailable ?? false
+        let listed = catalog.backends.first { $0.id == backend.id }
+        guard listed?.isAvailable == true else {
+            // The host answered, so this is not literally "offline" — but a
+            // backend it does not list, or lists as signed out, is equally
+            // unusable and there is no reason case for it. `.offline` is chosen
+            // over a more specific-sounding one because its advice is the only
+            // one that is harmless when wrong; `certificateRejected` here would
+            // send the user to re-pair a machine whose certificate is fine.
+            //
+            // Naming the backend's own state is #41's edge (the availability
+            // write-back), not this one. Kept non-reachable so `ChatService`'s
+            // reconnect guard behaves exactly as it did.
+            return .unreachable(reason: .offline)
+        }
+
+        return .reachable
     }
 
     // MARK: - Streaming

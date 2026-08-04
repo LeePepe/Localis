@@ -15,10 +15,18 @@ import TransportKit
 /// not reconnect" and "reconnected to a host that happened to answer" are
 /// distinguishable only by whether anything was asked.
 private actor ProbeTransport: AgentTransport {
-    private let answer: Bool
+    private let answer: HostReachability
     private(set) var probeCount = 0
 
+    /// `true`/`false` kept as the convenience spelling: every test in this suite
+    /// asks whether a reconnect happened, and none of them is about *why* a host
+    /// refused. Spelling a reachability out at each call site would put a detail
+    /// in front of the thing being read.
     init(answer: Bool) {
+        self.answer = answer ? .reachable : .unreachable(reason: .offline)
+    }
+
+    init(answer: HostReachability) {
         self.answer = answer
     }
 
@@ -31,7 +39,7 @@ private actor ProbeTransport: AgentTransport {
         return TurnStream(turnID: nil, events: AsyncThrowingStream { $0.finish() })
     }
 
-    func probe(_ backend: AgentBackend) async -> Bool {
+    func probe(_ backend: AgentBackend) async -> HostReachability {
         probeCount += 1
         return answer
     }
@@ -273,6 +281,49 @@ struct ChatServiceReconnectTests {
 
         #expect(reconnected.status == .disconnected)
         #expect(reconnected.canSend == false)
+    }
+
+    /// A state that did not exist while `probe` returned `Bool` (#40), and the
+    /// one a reachability-shaped guard is most likely to get wrong: `.unknown`
+    /// is not a refusal, so `!= .unreachable` reads as a reasonable test and
+    /// opens the session on a host nothing has been established about.
+    ///
+    /// It has to stay closed for the same reason `backend.isAvailable` is
+    /// checked before the probe runs — a session that reports as sendable and
+    /// then fails at the far end is the accept-then-fail shape FR-053 rules out.
+    @Test("a host nothing is known about does not count as answering")
+    func unknownReachabilityLeavesSessionDisconnected() async throws {
+        let session = Self.makeSession(status: .disconnected)
+        let repository = InMemorySessionRepository(sessions: [session])
+        let service = Self.makeService(
+            transport: ProbeTransport(answer: .unknown), repository: repository
+        )
+
+        let reconnected = await service.reconnect(session, to: Self.makeBackend())
+
+        #expect(reconnected.status == .disconnected)
+        #expect(reconnected.canSend == false)
+    }
+
+    /// The reason a host refused changes what the *host list* says (#40) and
+    /// must not change what `reconnect` does. A guard that started treating
+    /// some reasons as recoverable would reopen sessions on a Mac whose
+    /// certificate no longer matches — the one failure constitution V says is
+    /// not retryable at all.
+    @Test("no unreachable reason reopens the session")
+    func noReasonReconnects() async throws {
+        for reason in HostUnreachableReason.allCases {
+            let session = Self.makeSession(status: .disconnected)
+            let repository = InMemorySessionRepository(sessions: [session])
+            let service = Self.makeService(
+                transport: ProbeTransport(answer: .unreachable(reason: reason)),
+                repository: repository
+            )
+
+            let reconnected = await service.reconnect(session, to: Self.makeBackend())
+
+            #expect(reconnected.canSend == false, "\(reason) must not reopen the session")
+        }
     }
 
     @Test("a Mac that does not answer does not erase why the last turn failed")
