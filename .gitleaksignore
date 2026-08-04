@@ -1,0 +1,32 @@
+# One fingerprint, pinned to one commit, one file, one line.
+#
+# 95c2953a bridge/scripts/acceptance-unpair.sh:112 is the string
+# `Bearer tok-never-issued-by-anyone` — the deliberately invalid token in the
+# assertion that an unknown token answers `invalid_token` rather than
+# `token_revoked`. It authenticates nothing; the bridge has never issued it.
+#
+# Verified two ways on 2026-08-04, independently by two people: every real
+# token in that script reaches curl through $TOKEN (sole assignment at :75,
+# read from the pairing response), and the flagged value is the only literal
+# among the four Bearer headers in the file.
+#
+# The rule stays on. `curl-auth-header` matches the shape `Bearer <literal>`
+# and never inspects the value, so it cannot tell a fake from a credential —
+# which is exactly why it must keep firing everywhere else. This exempts one
+# fingerprint, not the rule. Positive control, run before committing this
+# file: a realistic token planted in a new script under bridge/scripts/ was
+# still reported (`leaks found: 1`), and removing it returned the tree to
+# `no leaks found`.
+#
+# Why an ignore entry rather than only editing the script: `gitleaks detect`
+# scans history, and the finding is anchored to a commit that already exists.
+# Editing the working tree cannot clear a blob that is already reachable, so
+# the job stays red on every branch regardless of what the file says today.
+# The alternative was rewriting published history, which costs every open
+# branch a rebase to erase a string that was never a secret.
+#
+# The script itself is fixed separately on `feat/bridge-skeleton`, where the
+# value is assembled through a variable so no *new* finding can appear. That
+# branch is not merged; this entry covers the history that exists today, and
+# is what unblocks the five pull requests currently failing on it.
+95c2953af8bc91f83a4d474215298cc61be07e0c:bridge/scripts/acceptance-unpair.sh:curl-auth-header:112
