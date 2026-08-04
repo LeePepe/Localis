@@ -46,6 +46,58 @@ public enum HostReachability: Hashable, Sendable {
     case reachable
     case unreachable(reason: HostUnreachableReason)
     case unknown
+    /// No probe is possible at all: the pairing record says `.paired`, but this
+    /// device holds no pin for the machine, so there is nothing to connect with.
+    ///
+    /// **Split out of `unknown` because silence is honest for only one of the
+    /// two** (#51). Both were `unknown`, both rendered as no sentence, and on
+    /// the card they were indistinguishable — but "the answer has not come back
+    /// yet" resolves itself in a moment, and "there is no credential to ask
+    /// with" never does. `team-lead` hit the second while accepting #48: a
+    /// "Paired" pill with nothing under it, on a machine that could never
+    /// answer.
+    ///
+    /// **Not a `HostUnreachableReason`, deliberately.** Every case of that enum
+    /// is produced by a distinct transport error — `ProbeReachabilityTests`
+    /// asserts exactly that — and this state is reached without any request
+    /// being made at all. A fifth reason there would also run into the ruling
+    /// recorded on `HostRevocation` (2026-08-04). This is the *absence* of a
+    /// probe, not the result of one.
+    ///
+    /// **Recomputed, never persisted**, like everything else on this type: it
+    /// is derived from the store plus the Keychain on every load, so restoring
+    /// the pin clears it by itself. That is why the fix is here rather than a
+    /// write that "reconciles" the pairing state — writing `.revoked` would
+    /// silently unpair a machine the user never touched, and only a person
+    /// could undo it.
+    case unprobable
+}
+
+extension HostReachability {
+    /// What to tell the user about a machine we hold no pin for.
+    ///
+    /// **A constant rather than a case-by-case `userMessage`** like
+    /// `HostUnreachableReason`'s: there is exactly one way to reach
+    /// `unprobable`, and an enum of one case carrying one sentence would be
+    /// ceremony around a constant. If a second cause ever appears this becomes
+    /// that enum, and the compiler will say so — the sentence would have to be
+    /// chosen rather than looked up.
+    ///
+    /// **It claims nothing about the Mac**, because nothing was asked. Every
+    /// existing sentence would misdescribe it: `unauthorized` says "this Mac no
+    /// longer accepts this device" when it has neither accepted nor rejected
+    /// anything, and `offline` sends the user to check a network that is
+    /// probably fine. What is true is local — the credential is missing on
+    /// *this device* — and the action is the one `HostAssembly.joined` already
+    /// names for a restored device backup: pair it again.
+    ///
+    /// Lives in this module for the same reason `HostUnreachableReason`'s
+    /// wording does: one vocabulary for "why this machine is unusable", derived
+    /// locally, with nothing off the wire reaching a screen through it
+    /// (constitution I).
+    public static let missingCredentialMessage = String(
+        localized: "This Mac's pairing is missing from this device. Pair again to restore it."
+    )
 }
 
 extension HostReachability {

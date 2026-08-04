@@ -137,18 +137,42 @@ final class HostListModel {
         rows = hosts.map { host in
             HostRowState(
                 host: host,
-                // A machine with no answer keeps the `.unknown` default. That is
-                // not a failure to report: `unreachableDetail` renders it as no
-                // sentence at all, which is right — nothing was established.
-                //
                 // Spelled `?? .unknown` rather than mapping the optional through
                 // `HostRuntimeState.init(reachability:)`: that unapplied form
                 // does not name this initialiser, which takes three parameters,
                 // and the error it produces talks about a generic parameter on
                 // `Optional.map` rather than about the type being constructed.
-                runtime: HostRuntimeState(reachability: measured[host.id] ?? .unknown)
+                runtime: HostRuntimeState(
+                    reachability: measured[host.id] ?? Self.unaskedReachability(of: host)
+                )
             )
         }
+    }
+
+    /// What to record about a machine that was not asked.
+    ///
+    /// **The two silences that used to be one** (#51). A machine with no answer
+    /// keeps `.unknown`, which `unreachableDetail` renders as no sentence at
+    /// all — right, because nothing was established and the answer may yet
+    /// arrive. But a machine that is `.paired` with no pin was also landing
+    /// here, and for it no answer will ever arrive: there is no credential to
+    /// ask with, so every future refresh skips it exactly like this one.
+    /// `team-lead` hit that state accepting #48 — a "Paired" pill with nothing
+    /// under it, indistinguishable from a probe still in flight.
+    ///
+    /// **The condition is the store's word against the Keychain's**, which is
+    /// precisely the pair `canConnect` folds together. Split apart here: a
+    /// `.paired` record with no pin is the inconsistency, and any other state
+    /// with no pin is ordinary (a machine the user added but never paired has
+    /// no pin and is not supposed to have one).
+    ///
+    /// Deriving it rather than storing it is the whole point — restore the pin
+    /// and the next load says `.unknown` again with nobody writing anything.
+    private static func unaskedReachability(of host: LocalisHost) -> HostReachability {
+        if host.pairingState == .paired && host.pinnedSPKI == nil {
+            return .unprobable
+        }
+        return .unknown
     }
 
     /// Adds a machine from an address the user typed (FR-001).
@@ -215,14 +239,24 @@ struct HostRowState: Identifiable, Equatable, Sendable {
     /// Why this machine is unusable right now, or `nil` when nothing is known to
     /// be wrong (FR-060).
     ///
-    /// **`nil` covers two different situations on purpose.** A reachable host
-    /// and a never-probed one both produce no sentence, because in neither case
-    /// is there a failure to report. Rendering `.unknown` as a problem would put
-    /// "isn't answering" under every machine at launch — a claim no probe backs,
-    /// and one the user would have to disprove.
+    /// **`nil` covers two situations on purpose, and used to cover three.** A
+    /// reachable host and a never-probed one both produce no sentence, because
+    /// in neither case is there a failure to report. Rendering `.unknown` as a
+    /// problem would put "isn't answering" under every machine at launch — a
+    /// claim no probe backs, and one the user would have to disprove.
+    ///
+    /// The third was the defect in #51: a machine whose pin is gone can never
+    /// be probed, and it sat in `.unknown` looking exactly like one whose
+    /// answer was still on its way. `.unprobable` is its own case now, and says
+    /// so.
     var unreachableDetail: String? {
         switch runtime.reachability {
         case .unreachable(let reason): reason.userMessage
+        // Not a probe result — no request was made — but it is a reason this
+        // machine is unusable, which is what this property is for. A second
+        // optional string beside this one would give the card two places to
+        // look and the view a decision to make.
+        case .unprobable: HostReachability.missingCredentialMessage
         case .reachable, .unknown: nil
         }
     }
@@ -231,6 +265,14 @@ struct HostRowState: Identifiable, Equatable, Sendable {
     ///
     /// Separate from `unreachableDetail != nil` in intent only: this one is for
     /// deciding, that one is for showing.
+    ///
+    /// **`.unprobable` is deliberately not folded in here.** No probe ran, so
+    /// nothing was *established* — widening this to "anything the card puts a
+    /// sentence under" would make the two properties synonyms and lose the
+    /// distinction the name carries. Nothing in production reads this today
+    /// (checked 2026-08-04: two test assertions and nothing else), so the
+    /// choice costs nothing now; if a caller appears that means "show the
+    /// warning styling", it wants `unreachableDetail != nil` and should say so.
     var isUnreachable: Bool {
         if case .unreachable = runtime.reachability { return true }
         return false
@@ -249,6 +291,15 @@ struct HostRowState: Identifiable, Equatable, Sendable {
         // Both halves must hold. `canConnect` answers "is this pairing good",
         // reachability answers "did it answer" — a machine that just refused our
         // certificate satisfies the first and fails the second.
+        //
+        // **`.unprobable` needs no branch of its own, and that is an invariant
+        // rather than an oversight.** It is produced only for a host that is
+        // `.paired` with no pin, which is exactly the case `canConnect` already
+        // returns false for — the two conditions cannot disagree, because the
+        // second is the negation of one conjunct of the first. Adding
+        // `|| .unprobable` here would read as a second, independent guard and
+        // hide that; if `unaskedReachability` ever widens, this is the line to
+        // revisit.
         if case .unreachable = runtime.reachability {
             isConnectable = false
         } else {
