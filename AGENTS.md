@@ -305,6 +305,22 @@ The rules that come out of this, in order of how often they save us:
     what was measured ("arm B: removing the argument alone changed nothing")
     over comments that state a mechanism, because a measurement carries its own
     provenance and a mechanism does not.
+16. **A grep is only as true as its path argument, and the path is not in the
+    output.** A search over `Packages/*/Sources` came back showing no place
+    that cancels an in-flight request, and that absence became the premise of
+    a ruling — that `-999` was unambiguous and could be mapped straight to a
+    pin mismatch. The app target was never searched. `Localis/Sources` has a
+    user-facing cancel, and a five-line program confirmed the obvious
+    consequence: cancelling the enclosing `Task` makes `URLSession` throw
+    `-999`. The ambiguity was real and already in production.
+
+    A positive control does not save you here — the control ran, the command
+    worked, and the command was answering about the wrong subtree. **"Nothing
+    matched" and "nothing matched in the half you searched" are the same
+    string.** So when an absence is about to become a premise, state the
+    search scope out loud next to the conclusion, and ask whether the thing
+    you are claiming does not exist could live outside it. Absence of evidence
+    is the one result whose reliability is invisible in its own output.
 
 ## Hooks
 
