@@ -28,10 +28,23 @@ public struct ClaudeTurnResult: Sendable, Hashable {
     /// A code from the contract's §6 vocabulary, never the CLI's own text —
     /// which may name a file (constitution I).
     public let errorCode: String?
+    /// The CLI refused the `--resume` target and did no work (`ResumeFailure`).
+    ///
+    /// A *report*, not an instruction. It says what the frame proved — the
+    /// named conversation is gone and `num_turns` was 0 — and nothing about
+    /// what to do next. Only `ClaudeBackend` knows whether this invocation
+    /// passed `--resume` at all, so only it can decide whether the report is
+    /// even applicable.
+    public let resumeWasRejected: Bool
 
-    public init(outcome: TurnEndEvent.Outcome, errorCode: String? = nil) {
+    public init(
+        outcome: TurnEndEvent.Outcome,
+        errorCode: String? = nil,
+        resumeWasRejected: Bool = false
+    ) {
         self.outcome = outcome
         self.errorCode = errorCode
+        self.resumeWasRejected = resumeWasRejected
     }
 }
 
@@ -214,7 +227,12 @@ public enum ClaudeStreamDecoder {
             // A code from §6's vocabulary. The CLI's own message is not
             // forwarded: it can name a file, and the client maps codes to its
             // own wording anyway.
-            errorCode: failed ? "backend_error" : nil
+            errorCode: failed ? "backend_error" : nil,
+            // Carried on the result rather than decided here: this decoder is
+            // stateless and has no idea whether the invocation used `--resume`
+            // at all. `ClaudeBackend` knows, and it is the only place that can
+            // act on it.
+            resumeWasRejected: ResumeFailure.isRetryableWithoutResume(frame: frame)
         )))
 
         return outputs
