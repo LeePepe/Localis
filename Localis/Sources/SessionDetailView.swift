@@ -35,13 +35,26 @@ final class SessionDetailModel {
     private let repository: any SessionRepository
     private let sessionID: UUID
     private let service: ChatService
+    /// Applies whatever a refusal implies about the machine's pairing.
+    ///
+    /// Held here because this is where a 401 actually lands: the transport maps
+    /// it to a `LocalisError` and the stream throws it, and until now the only
+    /// consequence was a sentence on screen. A Mac that revoked this device
+    /// went on being listed as "Paired", with its pin still in the Keychain.
+    private let revocation: HostRevocation
     private var session: Session?
     private var streamTask: Task<Void, Never>?
 
-    init(repository: any SessionRepository, sessionID: UUID, service: ChatService) {
+    init(
+        repository: any SessionRepository,
+        sessionID: UUID,
+        service: ChatService,
+        revocation: HostRevocation? = nil
+    ) {
         self.repository = repository
         self.sessionID = sessionID
         self.service = service
+        self.revocation = revocation ?? HostRevocation(repository: repository)
     }
 
     func load() async {
@@ -149,8 +162,34 @@ final class SessionDetailModel {
                 // reason for stopping is new information.
                 self?.loadError = (error as? LocalisError)?.userMessage
                     ?? "The reply stopped early."
+                // A refusal can mean more than "this turn failed": a revoked
+                // token means this device is no longer paired with that Mac,
+                // and saying so only in a sentence would leave the host list
+                // claiming otherwise and the pin sitting in the Keychain.
+                await self?.applyPairingConsequence(of: error, host: session.hostID)
             }
         }
+    }
+
+    /// Lets a transport failure change the machine's pairing, when it implies
+    /// one.
+    ///
+    /// **Failures here are deliberately swallowed, and this is the one place in
+    /// the type where that is right.** The user has already been told the turn
+    /// failed. A second error about the Keychain, raised while they are looking
+    /// at a reply that stopped, explains nothing they can act on — and the
+    /// original message is the one that matters. The record simply stays
+    /// `.paired`, which is what it was before.
+    private func applyPairingConsequence(of error: any Error, host: HostID) async {
+        guard let error = error as? LocalisError else { return }
+        try? await revocation.apply(error, to: host)
+    }
+
+    /// Waits for the in-flight stream, if any. Test support: the stream runs in
+    /// a detached task, so an assertion made straight after `submit` would race
+    /// it.
+    func awaitStream() async {
+        await streamTask?.value
     }
 
     func cancelStream() {

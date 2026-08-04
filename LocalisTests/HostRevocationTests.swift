@@ -3,6 +3,7 @@ import Testing
 
 @testable import Localis
 
+import ChatService
 import LocalisModels
 import SessionStore
 import TransportKit
@@ -283,5 +284,65 @@ struct HostRevocationTests {
         let revocation = HostRevocation(repository: repository, credentials: SpyCredentials())
 
         try await revocation.apply(.tokenRevoked, to: HostID())
+    }
+
+    // MARK: - Reaching it from where a 401 actually arrives
+
+    @Test("a 401 during a send unpairs the machine, not just the sentence on screen")
+    func revocationIsReachedFromTheSendPath() async throws {
+        // **Why this test is separate from the seven above.** Those all call
+        // `HostRevocation` directly, so every one of them stays green on a
+        // build where nothing in the app ever constructs it — which was the
+        // state this type shipped in for exactly one commit, and is the same
+        // shape as #29 (`isAvailable` constant-true because no caller refreshes
+        // it). A type with correct behaviour and no caller is not a fix.
+        //
+        // The transport is rigged to refuse with `token_revoked`, which is what
+        // a Mac that revoked this device answers with on every request
+        // (bridge-protocol.md :118).
+        let host = Self.paired("Studio")
+        let repository = InMemorySessionRepository()
+        try await repository.save(host)
+        let backend = AgentBackend(id: "claude", displayName: "Studio Claude")
+        try await repository.save(backend, on: host.id)
+        let session = Self.session(host: host.id, title: "Refactor TransportKit")
+        try await repository.create(session)
+        let credentials = SpyCredentials(pins: [host.id: SPKIHash(base64: "AAA=")])
+
+        let model = await SessionDetailModel(
+            repository: repository,
+            sessionID: session.id,
+            service: ChatService(
+                transport: RefusingTransport(error: .tokenRevoked),
+                repository: repository
+            ),
+            revocation: HostRevocation(repository: repository, credentials: credentials)
+        )
+        await model.load()
+        await model.submit("does this go anywhere")
+        await model.awaitStream()
+
+        let stored = try #require(try await repository.host(id: host.id))
+        #expect(stored.pairingState == .revoked)
+        #expect(credentials.removed == [host.id])
+        // The user is still told something. Unpairing silently would leave them
+        // looking at a composer that stopped working for no stated reason.
+        #expect(await model.loadError != nil)
+        // And the conversation is still there (FR-027).
+        #expect(try await repository.allSessions().count == 1)
+    }
+
+    /// A transport that refuses every turn with one error.
+    ///
+    /// `EchoTransport` cannot express this — it succeeds unconditionally, which
+    /// is fine for the assembly tests and useless here.
+    private struct RefusingTransport: AgentTransport {
+        let error: LocalisError
+
+        func send(_ request: TurnRequest) async throws -> TurnStream {
+            throw error
+        }
+
+        func probe(_ backend: AgentBackend) async -> Bool { false }
     }
 }
