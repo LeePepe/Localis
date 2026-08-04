@@ -117,10 +117,29 @@ if true; then
   fi
 fi
 
-# ---- 2. Frontmatter anti-rot (only when a tech-context.md is staged) --------
+# ---- 2. Frontmatter anti-rot -----------------------------------------------
+#
+# Fires on three staged shapes, not just the obvious one:
+#   - a tech-context.md            — the file whose contents can rot
+#   - a Packages/<X>/Package.swift — how a *new* layer arrives, and the case
+#     the old filter missed entirely: a package added without a tech-context.md
+#     staged nothing this pattern matched, so the one commit that introduces an
+#     unchecked layer was also the one commit that skipped the check
+#   - the checker itself           — an edit to the check is when its self-test
+#     matters most, and a path filter would otherwise skip it
+#
+# The self-test is blocking and runs first, for the same reason it does for the
+# wiring check: this script's whole job is to turn a missing tech-context.md
+# into an error, and a coverage check that has lost the ability to fail would
+# restore that silence while still printing ✅.
 
-if echo "$STAGED" | grep -q 'tech-context\.md$'; then
+if echo "$STAGED" | grep -qE '(tech-context\.md$|^Packages/[^/]+/Package\.swift$|^scripts/check-frontmatter\.sh$)'; then
   if [ -x scripts/check-frontmatter.sh ]; then
+    if ! bash scripts/check-frontmatter.sh --self-test >/dev/null; then
+      echo "❌ scripts/check-frontmatter.sh can no longer detect an unchecked layer."
+      echo "   A green frontmatter check that cannot fail is worse than none. Commit aborted."
+      exit 1
+    fi
     if ! bash scripts/check-frontmatter.sh; then
       echo "❌ tech-context.md frontmatter is out of sync. Commit aborted."
       exit 1

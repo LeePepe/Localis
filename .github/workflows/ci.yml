@@ -116,6 +116,14 @@ jobs:
       - name: SwiftLint --strict
         run: swiftlint lint --strict
       # Layer frontmatter must stay consistent with the packages on disk.
+      #
+      # The self-test runs first for the same reason the wiring one does. This
+      # check's job is to turn a missing tech-context.md into an error — before
+      # it named its layers, a package without one was skipped by the glob and
+      # the run went green. A coverage check that lost the ability to fail would
+      # bring that silence back while still printing ✅.
+      - name: Frontmatter check can still fail
+        run: bash scripts/check-frontmatter.sh --self-test
       - name: Layer frontmatter anti-rot check
         run: bash scripts/check-frontmatter.sh
       # The self-test runs first and is not redundant: a wiring check that has
