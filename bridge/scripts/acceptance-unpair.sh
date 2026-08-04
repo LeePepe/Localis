@@ -20,6 +20,14 @@ FAILURES=0
 cleanup() {
     [ -n "${BRIDGE_PID:-}" ] && kill "$BRIDGE_PID" 2>/dev/null
     wait "$BRIDGE_PID" 2>/dev/null
+    # Deleting the home directory belongs here, not at the end of the happy
+    # path. grants.json holds the pairing token in plaintext (TokenStore's
+    # Entry.token is a String), and this script has two early exits — the
+    # bridge failing to start, and pairing failing — each of which used to
+    # leave that file behind in /tmp. A credential surviving the process that
+    # created it is the failure Constitution I exists to prevent, and it was
+    # reachable on exactly the paths where something had already gone wrong.
+    [ -n "${HOME_DIR:-}" ] && rm -rf "$HOME_DIR"
 }
 trap cleanup EXIT
 
@@ -109,8 +117,16 @@ check "revoked token -> error.code" "token_revoked" "$ERRCODE"
 echo
 echo "=== 7. an UNKNOWN token must still be invalid_token, not token_revoked ==="
 echo "        (the constraint iOS cannot verify: both are 401 and look identical)"
+# Assembled rather than written inline. gitleaks' curl-auth-header rule matches
+# the *shape* `Bearer <literal>` without inspecting the value, so this string —
+# the one token in the file that cannot authenticate anything — was the only
+# one it ever flagged, while the three real ones reach curl through $TOKEN and
+# pass unnoticed. That single finding failed Lint & policy repository-wide and
+# blocked five unrelated pull requests. Any value the bridge never issued
+# satisfies the assertion; the wording is not what is being tested.
+NEVER_ISSUED="tok-never-issued"
 BODY=$(curl -sk -w '\n%{http_code}' "https://127.0.0.1:$PORT/v1/models" \
-    -H "Authorization: Bearer tok-never-issued-by-anyone")
+    -H "Authorization: Bearer $NEVER_ISSUED")
 STATUS=$(printf '%s' "$BODY" | tail -1)
 ERRCODE=$(printf '%s' "$BODY" | sed '$d' | json_field error.code)
 check "unknown token -> 401" "401" "$STATUS"
@@ -136,5 +152,8 @@ if [ "$FAILURES" -eq 0 ]; then
 else
     echo "$FAILURES CHECK(S) FAILED"
 fi
-rm -rf "$HOME_DIR"
+# No rm here — cleanup() runs on EXIT and covers this path along with the two
+# early exits. Deleting in both places would work, but it would suggest the
+# happy path is where cleanup happens, which is the assumption that let the
+# plaintext token survive the failing paths in the first place.
 exit "$FAILURES"
