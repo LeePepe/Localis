@@ -18,6 +18,13 @@
 `409 session_busy` 无触发条件、`max_buffer_bytes` 无接线要求、
 §3.3「首个事件回传 `turn_id`」是**无生产方无消费方的冗余 MUST**（已删，响应头那半保留）
 （另补端点清单）。**不改变任何协议语义、线上字节一字不变，协议版本仍为 `1`**。标 **[D]**。
+**[Amendment E](../amendments/E-2026-08-04-pairing-lifecycle.md)（2026-08-04，理由：#31
+**首次对真 bridge 的端到端联调**）**：澄清配对生命周期的四处——`invalid_token` 与
+`token_revoked` 的清凭据分界（散文与错误码表此前互相矛盾，表已收窄）、token MUST
+跨 bridge 重启持久化（转写遗漏）、配对请求本身就在已 pin 的连接上发出（不存在
+「首次连接无 pin」这一步）、鉴权先于路由使 404/405 仅对已鉴权请求可达（有意，非缺陷）。
+**四条都是把两侧已有的理解写下来，线上字节一字不变，
+协议版本仍为 `1`**。标 **[E]**。
 
 这是 **iOS App ↔ `localis-bridge`（Mac daemon）** 之间的接口契约，是双方的**唯一真源**。
 bridge 不在本仓库（宪法 VII），但契约在——iOS 侧的契约测试对着本文件写。
@@ -40,8 +47,8 @@ bridge 不在本仓库（宪法 VII），但契约在——iOS 侧的契约测�
 | 项 | 约定 |
 |---|---|
 | Scheme | **HTTPS only**。无明文回退（宪法 V）。 |
-| 证书 | 允许 self-signed；客户端在**配对时**记录 SPKI SHA-256 并此后固定校验。**[A]** 逐 host 独立 pin，**禁止跨 host 共享信任库**——host A 的证书不得用于认证 host B。 |
-| 鉴权 | `Authorization: Bearer <pairing-token>`，每个请求都带。**[A]** token 逐 host 独立。 |
+| 证书 | 允许 self-signed；客户端在**配对时**记录 SPKI SHA-256 并此后固定校验。**[A]** 逐 host 独立 pin，**禁止跨 host 共享信任库**——host A 的证书不得用于认证 host B。**[E]** SPKI 是**带外**取得的（与 6 位码同一渠道），因此**配对请求本身就在已 pin 的连接上发出**——不存在「首次连接无 pin」这一步。客户端实现 MUST NOT 为配对保留一条不校验证书的路径。 |
+| 鉴权 | `Authorization: Bearer <pairing-token>`，每个请求都带。**[A]** token 逐 host 独立。**[E]** token 由 bridge **持久化**，MUST 跨 bridge 进程重启保持有效（见 §1）。 |
 | 版本 | 请求带 `x-localis-protocol: 1`；响应回同名头表明 bridge 支持的版本。**[A]** 版本协商**逐 host**：host A 是 1、host B 是 2 是合法状态。 |
 | 发现 | Bonjour service type `_localis._tcp`，TXT 含 `v=<protocol>`、`name=<display name>`。**[A]** 新增**可选** `hid=<stable bridge instance id>`（见下）。发现结果是**多台**主机的集合。 |
 
@@ -120,6 +127,21 @@ bridge 不在本仓库（宪法 VII），但契约在——iOS 侧的契约测�
 > **[A]** 清除**只针对该主机**的 token，其它主机的凭据与连接不受影响。
 > 客户端侧解除配对时，**MUST** 一并清除该主机的 pinned SPKI（零残留），
 > 但 **MUST NOT** 因此删除任何本地会话（spec FR-027）。
+>
+> **[E] token MUST 持久化，bridge 重启不解除配对。** 若重启等于解除配对，
+> FR-027 描述的那个「显式解除配对动作」就没有意义了——每次重启都在无声地
+> 做同一件事。spec:46「做一次配对」与 spec:220「不要求重新配对」共同要求
+> 这一点；它此前未被写进本契约，是转写遗漏，不是有意的留白。
+>
+> **[E] 只有 `token_revoked` 清凭据，`invalid_token` 不清。** 两者的区别不是
+> 严重程度，是**原因空间**：`token_revoked` 携带「有一件已知的事发生过」——
+> 人在 Mac 上执行了吊销；而 `invalid_token` 的成因是开放的（bridge 重启、
+> 状态丢失、实现缺陷）。为一个说不清的拒绝清掉 Keychain，其不可逆程度高于
+> 放弃一次操作，且用户无从判断该不该重新配对。
+>
+> 因此 bridge **MUST** 只对走过吊销流程的 token 发 `token_revoked`；任何其它
+> 认不出的 token 一律发 `invalid_token`。这条约束在 bridge 一侧，客户端无法
+> 弥补——两者在线上长得一模一样。
 
 
 ---
@@ -584,7 +606,8 @@ v1 客户端一律忽略——这正是下方容错规则的既有行为，**bri
 
 | HTTP | code | 客户端行为 |
 |---|---|---|
-| 401 | `invalid_token` / `token_revoked` | 清除 token，提示重新配对 |
+| 401 | `token_revoked` | 清除 token **与 pinned SPKI**，提示重新配对 |
+| 401 | `invalid_token` | **放弃本次操作，不清除任何凭据**（理由见 §1 吊销段） |
 | 404 | `unknown_model` | 刷新 `/v1/models`，提示后端已不存在 |
 | 409 | `session_busy` | **[D] 保留未用**（见下）。客户端仍 MUST 能安全处理：提示上一条还没回完 |
 | 503 | `backend_unavailable` | 人话提示 + 重试动作 |
@@ -592,6 +615,17 @@ v1 客户端一律忽略——这正是下方容错规则的既有行为，**bri
 | **[C]** 404 | `unknown_turn` | 续取/取消一个不存在的 turn → 标 `interrupted` 并允许重试 |
 | **[C]** 410 | `turn_expired` | 超出 `retention_seconds` → 标 `interrupted` 并允许重试 |
 | **[C]** 403 | `turn_not_yours` | 续取者与发起设备不符 → **拒绝**，不得暴露该 turn 任何内容 |
+| **[E]** 404 | `not_found` | 路径不存在。**仅对已鉴权请求可达**（见下） |
+| **[E]** 405 | `method_not_allowed` | 方法不匹配。**仅对已鉴权请求可达**（见下） |
+
+**[E] 鉴权先于路由：未携带有效 token 的请求一律先得 `401`，不区分路径是否存在。**
+这是有意的，不是遮蔽缺陷——否则未鉴权调用方可以用状态码差异探出路由表。
+已鉴权请求得到的是真实的 `404` / `405`（2026-08-04 对真 bridge 实测确认：带有效
+token 时 `GET /nope` → 404、`GET /localis/v1/pair` → 405；同样两条不带 token 时
+均为 401）。
+
+因此「路径笔误伪装成 token 被拒」这一失败模式**只在手工探测时出现**（curl 忘带
+header），生产客户端配对后始终携带 token，不受影响。
 
 **message 字段仅供诊断**，客户端**不得**直接把它当 UI 文案（可能含路径等敏感信息，
 宪法 I / FR-025）；UI 文案按 `code` 本地映射。
