@@ -146,7 +146,7 @@ struct LocalisErrorBaselineTests {
     @Test("the original error vocabulary still carries user-facing text")
     func allErrorsHaveUserMessages() {
         let cases: [LocalisError] = [
-            .unreachable, .connectionLost, .malformedResponse,
+            .unreachable(), .connectionLost, .malformedResponse,
             .unauthorized, .invalidInput(field: "endpoint"), .cancelled
         ]
 

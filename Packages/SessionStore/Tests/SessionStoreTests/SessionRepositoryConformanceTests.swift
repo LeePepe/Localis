@@ -203,13 +203,13 @@ struct SessionRepositoryConformanceTests {
     )
     func errorStatusSurvives(_ implementation: Implementation) async throws {
         let repository = try implementation.make()
-        let session = Self.session(status: .error(.unreachable))
+        let session = Self.session(status: .error(.unreachable()))
 
         try await repository.create(session)
         let restored = try #require(try await repository.session(id: session.id))
 
         #expect(
-            restored.status == .error(.unreachable),
+            restored.status == .error(.unreachable()),
             "\(implementation) lost the failure, restoring \(restored.status)"
         )
     }
@@ -343,13 +343,13 @@ struct SessionRepositoryConformanceTests {
         path: ReadPath
     ) async throws {
         let repository = try implementation.make()
-        let session = Self.session(status: .error(.unreachable))
+        let session = Self.session(status: .error(.unreachable()))
         try await repository.create(session)
 
         let restored = try #require(try await path.read(session.id, from: repository))
 
         #expect(
-            restored.status == .error(.unreachable),
+            restored.status == .error(.unreachable()),
             "\(implementation) via \(path) returned \(restored.status)"
         )
     }

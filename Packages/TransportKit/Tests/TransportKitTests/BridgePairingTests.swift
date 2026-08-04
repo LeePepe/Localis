@@ -369,7 +369,11 @@ struct BridgePairingTests {
         let store = HostCredentialStore(service: Self.testService())
         let pairing = BridgePairing(http: http, credentials: store)
 
-        await #expect(throws: LocalisError.unreachable) {
+        // Matches the case, not the whole value: since #34 the error carries the
+        // OS's domain and code, so comparing against `.unreachable()` would be
+        // asserting the diagnostic is absent. The claim here is about which
+        // category the user lands in — asleep Mac, not wrong code.
+        do {
             try await pairing.pair(
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
@@ -378,6 +382,13 @@ struct BridgePairingTests {
                 deviceName: "iPhone",
                 deviceID: UUID()
             )
+            Issue.record("expected the socket failure to surface")
+        } catch let error as LocalisError {
+            guard case .unreachable = error else {
+                Issue.record("expected .unreachable, got \(error)")
+                store.removeAll()
+                return
+            }
         }
 
         store.removeAll()

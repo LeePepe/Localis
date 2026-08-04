@@ -156,7 +156,12 @@ public actor BridgeClient: AgentTransport {
             // Anything here is a break in that guarantee rather than a fact
             // about the host, so it takes the fallback the mapping gives an
             // unrecognised failure rather than inventing a more specific claim.
-            return HostReachability(failure: .unreachable)
+            //
+            // No diagnostic (#34): the same reasoning. Attaching this error's
+            // domain and code would describe where the guarantee broke, not why
+            // the host is unreachable, and a cause that names the wrong thing is
+            // worse for whoever reads the log than no cause at all.
+            return HostReachability(failure: .unreachable())
         }
 
         let listed = catalog.backends.first { $0.id == backend.id }
@@ -411,7 +416,16 @@ public actor BridgeClient: AgentTransport {
         } catch {
             // A socket-level failure. Reporting it as a bad response would send
             // the user to look at the bridge instead of the network.
-            throw LocalisError.unreachable
+            //
+            // The category is deliberately coarse — the user gets one sentence
+            // and one action either way — but the cause travels with it (#34).
+            // Without that, a rejected certificate and a dead route are the
+            // same value by the time anyone reads a log, and they need opposite
+            // fixes; #32 was chased from the wrong end for exactly this reason.
+            //
+            // Only `domain` and `code` are taken. Neither is free text from the
+            // other end, which is the line — not "these look harmless".
+            throw LocalisError.unreachable(diagnostic: TransportDiagnostic(error))
         }
     }
 

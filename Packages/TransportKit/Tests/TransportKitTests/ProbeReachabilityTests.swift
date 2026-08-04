@@ -22,7 +22,7 @@ struct ProbeReachabilityTests {
     @Test("each unreachable reason is produced by a distinct transport error")
     func everyReasonHasADistinctSource() {
         let produced: [LocalisError: HostUnreachableReason] = [
-            .unreachable: .offline,
+            .unreachable(): .offline,
             .certificatePinMismatch: .certificateRejected,
             .unauthorized: .unauthorized,
             .protocolUpgradeRequired(side: .app): .unsupportedProtocol,
@@ -126,7 +126,7 @@ private struct StubTransport: AgentTransport {
     let result: HostReachability
 
     func send(_ request: TurnRequest) async throws -> TurnStream {
-        throw LocalisError.unreachable
+        throw LocalisError.unreachable()
     }
 
     func probe(_ backend: AgentBackend) async -> HostReachability { result }

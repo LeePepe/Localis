@@ -119,7 +119,7 @@ struct SessionHostBindingTests {
         #expect(!session.withStatus(.disconnected).canSend)
         #expect(!session.withStatus(.connecting).canSend)
         #expect(!session.withStatus(.streaming).canSend)
-        #expect(!session.withStatus(.error(.unreachable)).canSend)
+        #expect(!session.withStatus(.error(.unreachable())).canSend)
         #expect(!session.withStatus(.orphaned).canSend)
     }
 
@@ -137,7 +137,7 @@ struct SessionHostBindingTests {
         let session = Self.makeSession()
 
         for status: SessionStatus in [
-            .disconnected, .connecting, .idle, .streaming, .error(.unreachable), .orphaned
+            .disconnected, .connecting, .idle, .streaming, .error(.unreachable()), .orphaned
         ] {
             #expect(session.withStatus(status).updatedAt == session.updatedAt)
         }
@@ -150,7 +150,7 @@ struct SessionHostBindingTests {
         let message = Message(id: UUID(), role: .assistant, text: "old answer", createdAt: Self.created)
         let session = Self.makeSession(messages: [message])
 
-        for status: SessionStatus in [.disconnected, .connecting, .idle, .streaming, .error(.unreachable), .orphaned] {
+        for status: SessionStatus in [.disconnected, .connecting, .idle, .streaming, .error(.unreachable()), .orphaned] {
             #expect(session.withStatus(status).messages == [message])
         }
     }
@@ -175,9 +175,9 @@ struct SessionHostBindingTests {
 struct SessionStatusTests {
     @Test("error carries the user-facing failure")
     func errorCarriesItsCause() {
-        let status = SessionStatus.error(.unreachable)
+        let status = SessionStatus.error(.unreachable())
 
-        #expect(status == .error(.unreachable))
+        #expect(status == .error(.unreachable()))
         #expect(status != .error(.unauthorized))
     }
 
