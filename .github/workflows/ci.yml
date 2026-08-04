@@ -58,13 +58,39 @@ jobs:
       # project.yml, so a stale checked-in pbxproj can never drift into a build.
       - name: Generate project
         run: xcodegen generate
+      # Resolve a UDID rather than naming a device. `name=iPhone 17` matches
+      # whatever the runner image happens to ship, and when it matches nothing
+      # xcodebuild fails with "Unable to find a device matching the provided
+      # destination specifier" — a red indistinguishable from a broken change,
+      # which has already cost one investigation. Device names move with Xcode
+      # releases; a UDID read off the machine cannot be stale. (This machine,
+      # for instance, has no iPhone 17 at all — only 16s.)
+      - name: Resolve a simulator
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available \
+            | awk '/-- iOS/{ios=1; next} /^-- /{ios=0}
+                   ios && /iPhone/ && /\(Booted\)|\(Shutdown\)/ {
+                     if (match($0, /\([0-9A-F-]{36}\)/)) {
+                       print substr($0, RSTART+1, RLENGTH-2); exit } }')
+          # Fail loudly rather than falling back. "No simulator available" and
+          # "ran on some other device" must not look alike — the second goes
+          # green on hardware nobody chose.
+          if [ -z "$UDID" ]; then
+            echo "::error::No available iPhone simulator on this runner."
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Using simulator $UDID"
+          xcrun simctl list devices available | grep -F "$UDID"
+          echo "SIMULATOR_UDID=$UDID" >> "$GITHUB_ENV"
       - name: xcodebuild test
         run: |
           set -o pipefail
           xcodebuild test \
             -project Localis.xcodeproj \
             -scheme Localis \
-            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -destination "id=$SIMULATOR_UDID" \
             -skipPackagePluginValidation \
             2>&1 | tee /tmp/xcb.log | tail -60
       - name: Surface compile/test errors
