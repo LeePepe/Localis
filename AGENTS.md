@@ -283,6 +283,15 @@ The rules that come out of this, in order of how often they save us:
    that mutation could have killed it** — otherwise "prove the verdict can
    move" has been applied to everything except the proof itself.
 
+   Three times this week the *control* was the thing that silently did nothing:
+   a mutant overwritten by its own harness, a mutation structurally unable to
+   kill, and a `--filter` naming a suite's display string instead of its
+   identifier, which prints `0 tests passed` — the same words as success. The
+   habit protects the code under test and then gets skipped on the apparatus,
+   because the apparatus is the thing you are currently trusting. **When a
+   control comes back the way you hoped, confirm it ran**: a red should name
+   the assertion that failed, a green should name the tests that passed.
+
    One habit found all of this, and it is cheap: **make the probe print what it
    saw, not what it concluded.** A dud mutation, a self-test that had never
    observed a real breach, three call sites propping up one invariant, an
