@@ -228,6 +228,16 @@ The rules that come out of this, in order of how often they save us:
 1. **Before trusting a "no problem," prove the check can say "problem."** Break
    the thing on purpose and watch it go red. A verdict that cannot move is not
    a verdict. This is the single highest-yield habit here.
+
+   The complement matters as much: **a check that goes red for uninteresting
+   reasons is worse than no check.** A test asserting exact user-facing wording
+   passes by restating the implementation and fails on every copy edit, so the
+   habit it teaches is *update the expected value without reading it* — and
+   that habit is spent on the next red, which will be a real one. Assert the
+   property instead: four reasons distinct from each other, each naming an
+   action the user can take. That survives rewording and still fails when a
+   fifth case is added by copying the fourth — which compiles, satisfies "every
+   case has words," and tells the user to fix the wrong thing.
 2. **A positive control is not optional for anything that gates.** Scripts that
    gate commits ship with a self-test that must fail. `scripts/check-wiring.sh
    --self-test` is the pattern.
