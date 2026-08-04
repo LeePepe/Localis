@@ -58,8 +58,12 @@ struct ErrorCodeTests {
         )
     }
 
-    /// A token that is well-formed but was never issued — the shape a client
-    /// holds after the bridge restarts, since grants live in memory.
+    /// A token that is well-formed but was never issued by this bridge.
+    ///
+    /// This used to be described as "the shape a client holds after a restart",
+    /// which stopped being true when grants were persisted (2026-08-04). It is
+    /// now reachable the ways a grant actually ends: the user unpaired
+    /// (FR-027), the grant file was deleted, or the token was never real.
     @Test("an unknown token is answered with a code the client knows")
     func unknownToken() async throws {
         let response = await Self.handler().respond(
