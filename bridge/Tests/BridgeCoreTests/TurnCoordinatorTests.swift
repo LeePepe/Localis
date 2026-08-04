@@ -74,11 +74,18 @@ struct TurnCoordinatorTests {
             }
     }
 
-    /// The contract states this twice, as two separate MUSTs — in the response
-    /// head *and* in the first event. The redundancy is deliberate: a client
-    /// that parses only the SSE body (a proxy, a log replay, a recorded
-    /// stream) never sees the header, and without the id it cannot resume or
-    /// cancel the turn it is watching.
+    /// **Pins bridge behaviour. Asserts no contract requirement.**
+    ///
+    /// This test was written against a MUST that Amendment D §5b has since
+    /// deleted, and the contract now says the opposite: a client MUST work when
+    /// the first event omits `turn_id`. It is kept because the bridge does emit
+    /// the field and a silent change to that is worth noticing — not because
+    /// anything is owed to a client.
+    ///
+    /// The justification that used to sit here — "a body-only consumer needs
+    /// it" — was written *after* the field existed, to explain it. Treating it
+    /// as design intent nearly got a correct deletion reversed. It is recorded
+    /// in `SequencedEvent.turnID` as what it is, and it is not an argument.
     @Test("the first frame carries turn_id")
     func firstFrameCarriesTurnID() async throws {
         let payloads = try await Self.payloads(from: [.event(.delta("He"))])
@@ -86,13 +93,15 @@ struct TurnCoordinatorTests {
 
         #expect(
             first["turn_id"] as? String != nil,
-            "the first frame has no turn_id — a body-only client cannot name the turn it is reading"
+            "the first frame lost its turn_id — bridge behaviour changed; no client is owed this (Amendment D §5b)"
         )
     }
 
-    /// Not only the first: the contract's resume story assumes any frame
-    /// identifies its turn, and a client that joins mid-stream reads whatever
-    /// frame arrives next.
+    /// Also bridge behaviour, not compliance — same standing as the test above.
+    ///
+    /// The contract's resume cursor is `seq` and the turn's identity is the
+    /// response header; neither needs this field. What it guards is that the
+    /// bridge stays self-consistent about emitting it at all.
     @Test("every frame carries turn_id")
     func everyFrameCarriesTurnID() async throws {
         let payloads = try await Self.payloads(from: [
