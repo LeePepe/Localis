@@ -18,8 +18,24 @@ struct LocalisErrorContractTests {
         .backendUnavailable(reason: nil), .backendUnavailable(reason: "not_logged_in"),
         .protocolUpgradeRequired(side: .app), .protocolUpgradeRequired(side: .bridge),
         .turnExpired, .unknownTurn, .turnNotYours,
-        .certificatePinMismatch, .truncated
+        .certificatePinMismatch, .truncated,
+        .pairingCodeRejected, .pairingSessionExpired
     ]
+
+    /// Every case is listed above.
+    ///
+    /// Four of the tests in this suite iterate `allCases`, so a case missing from
+    /// that array is a case none of them check — and the suite stays green while
+    /// covering less than it claims. The count is asserted here because there is
+    /// no `CaseIterable` to lean on: `LocalisError` has associated values, and
+    /// synthesising it would only enumerate one payload per case anyway.
+    ///
+    /// If this fails after you added a case, add it to `allCases` — do not raise
+    /// the number. The number is the reminder, not the requirement.
+    @Test("allCases really is all of them")
+    func caseListIsComplete() {
+        #expect(Self.allCases.count == 20)
+    }
 
     @Test("every error carries a user-facing message")
     func allErrorsHaveUserMessages() {
@@ -47,6 +63,47 @@ struct LocalisErrorContractTests {
         // credential and re-pairing. Collapsing them would either drop a valid
         // token or leave a dead one on the device.
         #expect(LocalisError.tokenRevoked != LocalisError.unauthorized)
+    }
+
+    @Test("a rejected pairing code is distinct from an invalidated pairing session")
+    func pairingRejectionIsDistinctFromExpiry() {
+        // spec.md:62 (US1 scenario 3) writes both halves in one sentence —
+        // "显示「配对码不对」…连续失败 5 次后该配对请求作废需重新发起" — but they
+        // are two different things to do. A wrong code (401) means look at the
+        // Mac's screen again; an invalidated session (429) means the code on
+        // that screen is dead and the user has to start pairing over on the Mac.
+        //
+        // Collapsed into one case, the fifth wrong attempt still reads "wrong
+        // code, try again", so the user retypes a code that can no longer work
+        // — and every retry looks exactly like the four before it.
+        #expect(LocalisError.pairingCodeRejected != LocalisError.pairingSessionExpired)
+        #expect(
+            LocalisError.pairingCodeRejected.userMessage
+                != LocalisError.pairingSessionExpired.userMessage
+        )
+    }
+
+    @Test("retrying the same code is offered only while the code can still work")
+    func pairingRetryabilityMatchesTheCause() {
+        // A wrong code is the one pairing failure where trying again is the
+        // right move — the user misread a digit. Once the session is
+        // invalidated, no number of attempts with any code will succeed until
+        // pairing is restarted on the Mac, so offering retry sends the user
+        // into a loop that cannot terminate.
+        #expect(LocalisError.pairingCodeRejected.isRetryable)
+        #expect(!LocalisError.pairingSessionExpired.isRetryable)
+    }
+
+    @Test("pairing failures are distinct from a rejected bearer token")
+    func pairingFailuresAreNotUnauthorized() {
+        // `unauthorized` is 401 `invalid_token` on an *already paired* host: the
+        // bearer we hold was refused. The two pairing cases happen before any
+        // token exists. They shared a case only because `LocalisError` had
+        // nothing else, which put "your saved credential was refused" and "you
+        // typed the wrong six digits" behind identical wording.
+        #expect(LocalisError.pairingCodeRejected != LocalisError.unauthorized)
+        #expect(LocalisError.pairingSessionExpired != LocalisError.unauthorized)
+        #expect(LocalisError.pairingCodeRejected.userMessage != LocalisError.unauthorized.userMessage)
     }
 
     @Test("a protocol upgrade names which side to upgrade")

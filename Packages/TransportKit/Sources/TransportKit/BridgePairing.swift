@@ -39,9 +39,11 @@ public struct BridgePairing: Sendable {
     ///   - presenting: the SPKI of the certificate the bridge presented on this
     ///     connection. Recorded as the pin, and checked on every connection
     ///     afterwards.
-    /// - Throws: `LocalisError.unauthorized` for a wrong, expired or
-    ///   invalidated code; `.unreachable` when the Mac did not answer;
-    ///   `.malformedResponse` for a reply we cannot use.
+    /// - Throws: `LocalisError.pairingCodeRejected` for a wrong or expired code
+    ///   (the session on the Mac is still live, so re-reading it works);
+    ///   `.pairingSessionExpired` once five failures have invalidated the
+    ///   request, which no retry from this screen can undo; `.unreachable` when
+    ///   the Mac did not answer; `.malformedResponse` for a reply we cannot use.
     public func pair(
         host: HostID,
         endpoint: HostEndpoint,
@@ -122,16 +124,19 @@ public struct BridgePairing: Sendable {
         switch status {
         case 200:
             return
-        case 401, 429:
-            // 401 is a wrong or expired code; 429 is the session invalidated
-            // after five failures. Both mean "start again on the Mac", and
-            // neither is retryable with the same code.
+        case 401:
+            // A wrong or expired code. The pairing session on the Mac is still
+            // live, so re-reading the six digits is the action that works.
+            throw LocalisError.pairingCodeRejected
+        case 429:
+            // The session was invalidated after five failures (spec.md:62). The
+            // code on the Mac's screen is dead, so unlike 401 the user has to
+            // start pairing again over there — retyping cannot succeed.
             //
-            // TODO(core): these deserve distinct cases — the 429 wording should
-            // send the user to restart pairing on the Mac rather than re-read
-            // the code. Collapsed for now because `LocalisError` has no case
-            // for it and that enum is not this package's to change.
-            throw LocalisError.unauthorized
+            // These shared `unauthorized` until `LocalisError` gained the two
+            // cases: the fifth wrong attempt read "wrong code, try again",
+            // advice that is guaranteed to fail.
+            throw LocalisError.pairingSessionExpired
         default:
             throw LocalisError.malformedResponse
         }
