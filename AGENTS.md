@@ -427,3 +427,18 @@ testflight → Run workflow with `force=true`.
   the TransportKit boundary and carries a `userMessage`.
 - **Conventional commits** (`feat:`, `fix:`, `refactor:`, `chore:` …), no AI
   attribution.
+- **Never write a task number as `(#NN)` in a commit subject — write `task
+  #NN`.** Task numbers come from the local task list; GitHub has never heard of
+  them, and issues and pull requests share one numbering space there. A subject
+  ending `(#28)` for task 28 becomes a live link to *pull request* 28, and
+  merging it closed an unrelated PR one second later. Nothing about that reads
+  as wrong: the link resolves, the number matches, and the close is attributed
+  to a human. PR numbers trail task numbers here, so every merge is another
+  chance to collide. GitHub does not linkify `task #28`.
+
+  The same collision is why **`closed by`, `merged by` and every other actor
+  field carries almost no information in this repo** — the whole team drives
+  `gh` under one account, so the field cannot separate one person from another,
+  or a person from automation. To tell a deliberate action from an accidental
+  one, use timing (one second apart is not a human decision), `commit_id` on
+  the timeline event, and whether the two changes have any files in common.
