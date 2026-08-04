@@ -164,6 +164,21 @@ read it and act.** A reference count answers neither. Nine hits on
 `certificatePinMismatch` read exactly like a case in active use; all nine were
 consumers.
 
+The phrase that covers all of them: these tests check **whether the referee
+judges correctly, not whether the referee was ever called onto the field.**
+`SPKIPinning` has twelve ungated assertions that CI runs every day — hash
+stability, cross-checks against `openssl`, a changed certificate refused, host
+A's certificate rejected for host B. All twelve passed throughout #32, during
+which the streamed path never invoked `SPKIPinning` at all. The verdict logic
+was flawless and unreached.
+
+That one is the worst variant, because unlike a skipped suite or an unreferenced
+enum it is **green, genuinely executed, and named for the thing you want**
+("SPKIPinning — per-host trust" reads like it guards the whole chain). The only
+way to catch it is to grep for what a test *does not* contain — `URLSession`,
+`NWListener`, `SecIdentity`: zero hits, all in memory — and searching for an
+absence is not a move anyone makes unprompted.
+
 Those two before them fail in opposite directions.
 
 The first is the most expensive shape this project has produced: **both sides
@@ -377,6 +392,31 @@ The rules that come out of this, in order of how often they save us:
     what was measured ("arm B: removing the argument alone changed nothing")
     over comments that state a mechanism, because a measurement carries its own
     provenance and a mechanism does not.
+
+    Propagation is the second-order problem; some comments are simply **wrong
+    when written**. One here gave three reasons for a type's placement: that
+    `LocalisUI` cannot depend on `LocalisModels` (`Package.swift:18` lists it),
+    that six files would have to change (all six already import it), and that a
+    named sibling is handed values rather than a model (its signature takes the
+    model). All three refutable by opening one file, and the analogy behaved
+    the *opposite* of how it was cited — so a reader who followed it found an
+    example supporting the other conclusion and assumed they had misunderstood.
+
+    Hence: **a factual claim in a comment — one a single command could falsify
+    — carries its check or its measurement.** `// LocalisUI cannot depend on
+    LocalisModels` needs the file and line; `// throwing here would replace the
+    list with an alert the user must dismiss` is design intent, unfalsifiable
+    by command, and needs nothing. Requiring provenance for every sentence
+    would collapse under its own weight; the falsifiable ones are exactly the
+    ones that rot, because the code moves and the prose does not.
+
+    And note when it happens: writing a comment is explaining, and explaining
+    *feels* like knowing. Same effect as the `#expect` written from an error
+    code's name. Cost of checking, in that case: one file, one line.
+
+    Refuted reasons are not a refuted conclusion. The placement may still be
+    right; it now has nothing holding it up. Mark it open rather than moving
+    the code — swapping one unverified reason for another is not progress.
 16. **A grep is only as true as its path argument, and the path is not in the
     output.** A search over `Packages/*/Sources` came back showing no place
     that cancels an in-flight request, and that absence became the premise of
