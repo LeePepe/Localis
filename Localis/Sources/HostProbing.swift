@@ -120,7 +120,24 @@ struct DemoHostProbe: HostProbing {
     static let defaultsKey = "LocalisDemoUnreachable"
 
     static var requestedReason: HostUnreachableReason? {
-        switch UserDefaults.standard.string(forKey: defaultsKey) {
+        reason(named: UserDefaults.standard.string(forKey: defaultsKey))
+    }
+
+    /// The mapping half of `requestedReason`, split out so it can be stated
+    /// without touching `UserDefaults.standard`.
+    ///
+    /// **Extracted for the test, and the extraction is not the whole test.**
+    /// Asserting only this would leave the join — the key name, and the fact
+    /// that anything reads it at all — unasserted, which is the same shape that
+    /// let #48's display chain sit broken while both of its ends were green.
+    /// `DemoProbeReasonTests` states this function's rule and then goes through
+    /// `requestedReason` once against the real defaults, so a renamed key
+    /// cannot stay quiet.
+    ///
+    /// - Parameter name: the raw launch-argument value, or `nil` when none was
+    ///   passed — which is every shipped build.
+    static func reason(named name: String?) -> HostUnreachableReason? {
+        switch name {
         case "offline": .offline
         case "certificateRejected": .certificateRejected
         case "unauthorized": .unauthorized
@@ -131,6 +148,11 @@ struct DemoHostProbe: HostProbing {
         // fallback of `.offline` would answer a request for
         // `certificateRejected` with the one sentence the acceptance says must
         // not appear, and read as the wiring being broken.
+        //
+        // Asserted by `DemoProbeReasonTests.unrecognisedReasonDoesNotFallBack`,
+        // with the positive control beside it — a mapping that returned `nil`
+        // for *everything* would satisfy that assertion forever while the demo
+        // device silently stopped working.
         default: nil
         }
     }
