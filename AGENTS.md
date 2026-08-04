@@ -147,6 +147,7 @@ Instances we actually hit, so you can recognise the family:
 | A timely `429 pairing_session_expired` | It was the *consequence* of the previous probe consuming the one-shot code, not the cause of the failure being investigated |
 | Nine references to an error case | All nine were on the receiving side; nothing in production ever throws it, so the handling has never once run |
 | A `#expect` stating the fact you needed | Behind `.enabled(if:)`, and CI feeds none of those variables — last verified by hand, before the fix that changed what it measures |
+| A secret scanner blocking every PR in the repo | The one line it matched was the deliberately fake token in a negative assertion; a real one assigned to a variable first would have passed |
 | A comment explaining a mechanism | It was wrong, had been copied into another layer, and the copy did not move when the original was fixed |
 
 Those last two are the "half a wire" family, and this project has now found
@@ -215,6 +216,21 @@ The rules that come out of this, in order of how often they save us:
 2. **A positive control is not optional for anything that gates.** Scripts that
    gate commits ship with a self-test that must fail. `scripts/check-wiring.sh
    --self-test` is the pattern.
+
+   Mutating one site at a time is the usual way to check a test is load-bearing,
+   and it has a blind spot: **when several places maintain the same invariant,
+   every single-site mutation stays green and the test looks worthless.** Three
+   call sites kept `updatedAt` moving; killing any one or two changed nothing,
+   and only removing all three went red. The rescue was a probe pointed the
+   other way — assert the *unmutated* code produces the wrong value, watch it
+   fail, and read the actual number out of the failure. That separates "the
+   test cannot see this value" from "the test sees it, but something else is
+   holding it up."
+
+   Adjacent, and the reason that investigation started at all: the site doing
+   the work was **outside** the loop it appeared to sit in, in a
+   `if status == .streaming` block indented to look like the loop body. Which
+   lines belong to which scope is a thing to check, not to read.
 3. **"More carefully" is not a fix.** It does nothing for a stale read, a wrong
    ref, or a misused tool — three things that have each bitten us. Change the
    procedure, not the diligence.
@@ -392,6 +408,26 @@ The rules that come out of this, in order of how often they save us:
     reissuing a one-shot secret, reaching into a file, knowing an id nobody
     displays. Each one is a place where the test is answering an easier
     question than the one asked.
+18. **A gate that matches a pattern is not enforcing the rule you think it is.**
+    `gitleaks` blocked every pull request in the repo over one line, and that
+    line was `Bearer tok-never-issued-by-anyone` — the deliberately invalid
+    token in an assertion checking that an unknown token gets `invalid_token`.
+    The three real tokens in the same script go through `$TOKEN` and were not
+    flagged, which is correct. But it means the protection runs backwards: **a
+    genuine credential assigned to a variable one line earlier passes, and the
+    one string in the file that could never authenticate anything is what
+    stops the build.**
+
+    That does not make the gate useless, and the fix is not an allowlist —
+    silencing the pattern here also silences the day it catches a real one.
+    The fix is to stop tripping it, and separately to ask what enforces the
+    rule the gate only approximates. Constitution I forbids credentials on the
+    device and in logs; nothing said anything about acceptance scripts, which
+    hold live tokens by construction (#39).
+
+    Generally: when a gate fires, separate **what it matched** from **what it
+    is for**. They agree often enough that the gap only shows up in the cases
+    that matter.
 
 ## Hooks
 
