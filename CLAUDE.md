@@ -67,6 +67,13 @@ when it is complete`. That is a statement about the tool, not about the logs —
 they exist, and the first command returns them. Do not read it as "the failure
 left no trace" and start guessing from the job's duration instead.
 
+It has a worse failure than refusing, too: after a rerun, `gh run view --log`
+returns the **latest attempt's** log rather than the one you asked for. The
+first attempt's crash then looks like it vanished, and "the rerun overwrote the
+evidence" is a conclusion you can reach with nothing actually wrong. The `gh
+api` form is addressed by job id and answers about that job. Refusing to answer
+is visible; answering about the wrong thing is not.
+
 Duration is a bad proxy in general here: a failing job that took 40s sounds like
 it died before reaching the tests, but the SessionStore suite runs 132 tests in
 **0.459s** — those 40 seconds were almost entirely compilation. Read the log.
