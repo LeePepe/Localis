@@ -35,6 +35,13 @@ minutes slower and tells you nothing `swift test` didn't.
 Run `xcodebuild` in the background with a long timeout — the first SPM resolve
 can take several minutes.
 
+**Before believing anything that rests on a tool being quiet, prove that tool
+would have spoken up.** Silence has two causes — nothing was wrong, and nothing
+was examined — and none of the tools below distinguishes them; `rc=0` is the
+usual disguise. Each subsection is one instance; they share the misread, not the
+tool. AGENTS.md rule 1 states the same habit as an action: *before trusting a
+"no problem," prove the check can say "problem."*
+
 ### swift-testing: `--filter` takes identifiers, the output prints display names
 
 Two different alphabets, and the asymmetry caught three people in one day —
