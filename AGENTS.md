@@ -405,6 +405,30 @@ The rules that come out of this, in order of how often they save us:
 10. **Before proposing "point that test at the other branch," check whether the
     other branch already has one.** The suggestion sounds like added coverage
     and can deliver a duplicate — coverage rises, nothing new is guarded.
+
+    The same move applies to this file. Asked to extend rule 16, team-lead
+    proposed a criterion — "a negative result's reliability depends on
+    something not in the result" — and flagged it as a guess to be checked. It
+    was already rule 16's first two layers, nearly word for word: *the path is
+    not in the output*, *the tree you searched is the second hidden argument*.
+    The proposal was clear and its criterion executable; it was also a
+    restatement, and building on it would have grown the rule without adding a
+    rule.
+
+    **Note where this failure is not.** Nothing was cited and then misapplied
+    (rule 9) — the document had been read earlier and was being drawn from
+    memory. Nothing written down was unsourced (rule 15) — the prose was fine.
+    Recall is the whole of it: **having read something is not having it, and
+    remembering it is not remembering it correctly**, and a remembered rule
+    arrives with the same confidence as one just read.
+
+    So, before proposing a change to a document you have read: **reread the
+    part you are changing, and grep it for the idea you are about to add.**
+    One command, and it separates "this is missing" from "I do not remember
+    this being there." When the answer is that it is already present, the
+    useful move is usually to say which existing layer covers it — that is a
+    smaller edit than the one being proposed, and it leaves the next reader a
+    pointer instead of a duplicate.
 11. **When a suggestion of yours turns out to be wrong, say which of your
     premises failed**, not just that you were wrong. Every reversal in this
     project came with the specific missing check, and that is what made the
