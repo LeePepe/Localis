@@ -592,6 +592,28 @@ The rules that come out of this, in order of how often they save us:
     within a job, put the cheap, rarely-tripped ones last — they are the ones
     you can afford to lose, and everything after a fragile step is something
     you have chosen to stop running whenever that step is unhappy.
+20. **A test can pass because of your `PATH`.** Every other false green here
+    has its cause in the code or the test — a gate, a fake client, a pure
+    function, an aggregate signal. This one lives in the process environment,
+    which appears in no diff, no test file and no workflow config, and which
+    nobody thinks to compare. A TLS harness shelled out to `openssl rsa
+    -outform DER`: LibreSSL at `/usr/bin` emits PKCS#1, OpenSSL 3 at
+    `/opt/homebrew/bin` emits PKCS#8, and `SecKeyCreateWithData` accepts only
+    the first. Green locally, `-50` in CI, and **the harness was correct or
+    incorrect depending on which binary came first in the path.**
+
+    The direction makes it worse: local green plus CI red sends you to suspect
+    the CI environment, not the green you already have.
+
+    Two habits come out of it. **Remove the negotiation instead of picking a
+    combination that happens to work** — generating and exporting the key
+    entirely within one framework deletes the variable rather than betting on
+    it. And **run the fix under both environments before pushing**: verified
+    against only the one that was failing, a fix can simply relocate the
+    failure. That happened in the same session — the repair passed under
+    OpenSSL 3 and broke under LibreSSL, which would have shipped a green PR
+    and left the red on the next person's machine, where nobody holds the
+    clue of having just changed something.
 
 ## Hooks
 
