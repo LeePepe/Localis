@@ -698,7 +698,7 @@ struct ChatServiceDetachmentTests {
     /// added here by the compiler — so `everyErrorIsSampled` below counts this
     /// list against the vocabulary rather than trusting it stays complete.
     static let allErrors: [LocalisError] = [
-        .unreachable, .connectionLost, .malformedResponse, .unauthorized,
+        .unreachable(), .connectionLost, .malformedResponse, .unauthorized,
         .invalidInput(field: "message"), .cancelled, .tokenRevoked,
         .unknownBackend, .sessionBusy, .backendUnavailable(reason: nil),
         .protocolUpgradeRequired(side: .app), .turnExpired, .unknownTurn,
@@ -1373,7 +1373,7 @@ struct ChatServiceActivityTimestampTests {
         let session = Self.makeSession()
         let repository = InMemorySessionRepository(sessions: [session])
         let service = Self.makeService(
-            transport: ScriptedTransport(text: ["par"], failure: LocalisError.unreachable),
+            transport: ScriptedTransport(text: ["par"], failure: LocalisError.unreachable()),
             repository: repository
         )
 

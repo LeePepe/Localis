@@ -16,7 +16,24 @@ import Foundation
 /// relaunch, rather than silently coming back as idle.
 public enum LocalisError: Error, Codable, Hashable, Sendable {
     /// The agent endpoint was unreachable (offline, wrong host, refused).
-    case unreachable
+    ///
+    /// `diagnostic` carries what the OS actually said, for logs and bug reports
+    /// (#34). It is optional because most construction sites have nothing to
+    /// put there — a 503 from the bridge is not an `NSError` — and defaulted so
+    /// that `.unreachable` keeps meaning what it meant: a call site with no
+    /// underlying error should not have to say so.
+    ///
+    /// **The default is not a convenience.** Without it, every existing
+    /// `.unreachable` would need `()` appended, including the ones in packages
+    /// this change has no business touching, and each of those edits is a
+    /// chance to change something else by accident.
+    ///
+    /// Not consulted by `userMessage` or `isRetryable`: the cause refines the
+    /// *report*, never the category or the wording. Two `.unreachable` values
+    /// with different diagnostics are nevertheless unequal under the synthesised
+    /// `==`, which is why `HostReachability` and the status projections switch
+    /// on the case rather than compare whole values.
+    case unreachable(diagnostic: TransportDiagnostic? = nil)
     /// The connection dropped mid-stream.
     case connectionLost
     /// The backend answered, but not in a shape we understand.
@@ -98,6 +115,20 @@ public enum LocalisError: Error, Codable, Hashable, Sendable {
         case app
         /// The host speaks an older protocol than this build requires.
         case bridge
+    }
+
+    /// What the OS said, when the failure came from a socket (#34).
+    ///
+    /// `nil` for every case that did not originate below the transport, and for
+    /// `.unreachable` values constructed without one.
+    ///
+    /// **For logs and bug reports only.** Nothing user-facing reads this, and
+    /// nothing routing does either — `userMessage` and `isRetryable` both
+    /// ignore it by construction, so a cause can never change what the user is
+    /// told or what the app tries next.
+    public var diagnostic: TransportDiagnostic? {
+        guard case .unreachable(let diagnostic) = self else { return nil }
+        return diagnostic
     }
 
     /// Whether offering the user a retry makes sense.

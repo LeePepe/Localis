@@ -57,7 +57,7 @@ struct ComposerStateTests {
     @Test("every blocked state says why, in words")
     func blockedStatesExplainThemselves() throws {
         let blocked: [SessionStatus] = [
-            .disconnected, .connecting, .streaming, .orphaned, .error(.unreachable)
+            .disconnected, .connecting, .streaming, .orphaned, .error(.unreachable())
         ]
         for status in blocked {
             let reason = try #require(
@@ -74,7 +74,7 @@ struct ComposerStateTests {
     /// tests below assert an *invariant* over the list rather than a table of
     /// expected strings.
     private static let allStatuses: [SessionStatus] = [
-        .idle, .disconnected, .connecting, .streaming, .orphaned, .error(.unreachable)
+        .idle, .disconnected, .connecting, .streaming, .orphaned, .error(.unreachable())
     ]
 
     @Test("a reason is present exactly when the composer is closed")

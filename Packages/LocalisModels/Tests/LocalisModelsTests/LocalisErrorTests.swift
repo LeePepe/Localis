@@ -12,7 +12,7 @@ import Testing
 @Suite("LocalisError contract coverage")
 struct LocalisErrorContractTests {
     private static let allCases: [LocalisError] = [
-        .unreachable, .connectionLost, .malformedResponse, .unauthorized,
+        .unreachable(), .connectionLost, .malformedResponse, .unauthorized,
         .invalidInput(field: "endpoint"), .cancelled,
         .tokenRevoked, .unknownBackend, .sessionBusy,
         .backendUnavailable(reason: nil), .backendUnavailable(reason: "not_logged_in"),
@@ -126,7 +126,7 @@ struct LocalisErrorContractTests {
         #expect(LocalisError.turnExpired.isRetryable)
         #expect(LocalisError.unknownTurn.isRetryable)
         #expect(LocalisError.truncated.isRetryable)
-        #expect(LocalisError.unreachable.isRetryable)
+        #expect(LocalisError.unreachable().isRetryable)
 
         // Constitution V: a changed certificate has no "trust anyway" path, and
         // no retry either — retrying cannot make the certificate match.
@@ -168,5 +168,58 @@ struct LocalisErrorContractTests {
             let decoded = try JSONDecoder().decode(LocalisError.self, from: data)
             #expect(decoded == error)
         }
+    }
+
+    @Test("a session persisted before the diagnostic existed still reads back")
+    func preDiagnosticPayloadStillDecodes() throws {
+        // `.unreachable` gained an associated value in #34, and it is persisted
+        // — `SessionStatus.error` goes to disk with the session. A change to the
+        // encoding would not fail any round-trip test (those encode and decode
+        // with the same build); it would surface as conversations that stop
+        // loading after an update, which is the user's data.
+        //
+        // The literal is the shape Swift synthesises for a case with no
+        // associated value. Written out rather than generated, because a
+        // fixture produced by the current build would encode whatever the
+        // current build does — including a regression.
+        let persistedBeforeDiagnostic = Data(#"{"unreachable":{}}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(LocalisError.self, from: persistedBeforeDiagnostic)
+
+        #expect(decoded == .unreachable())
+    }
+
+    @Test("an unreachable with no cause encodes exactly as it used to")
+    func absentDiagnosticIsOmittedNotNull() throws {
+        // The other direction, and the reason the migration is a non-event: an
+        // absent optional is *omitted*, not written as `null`. A build that
+        // wrote `{"unreachable":{"diagnostic":null}}` would still satisfy the
+        // test above — it decodes fine — while quietly making every newly
+        // written session unreadable by the previous app version, which is what
+        // a user who declines an update, or rolls one back, is running.
+        let encoded = try JSONEncoder().encode(LocalisError.unreachable())
+
+        #expect(String(data: encoded, encoding: .utf8) == #"{"unreachable":{}}"#)
+    }
+
+    @Test("the cause survives the round trip when there is one")
+    func diagnosticRoundTrips() throws {
+        // Otherwise the field would be write-only: correct in memory, gone by
+        // the time anyone reads the session back to work out what happened —
+        // which is the moment it exists for.
+        let error = LocalisError.unreachable(
+            diagnostic: TransportDiagnostic(domain: NSURLErrorDomain, code: -1202)
+        )
+
+        let decoded = try JSONDecoder().decode(
+            LocalisError.self, from: try JSONEncoder().encode(error)
+        )
+
+        #expect(decoded == error)
+        guard case .unreachable(let diagnostic) = decoded else {
+            Issue.record("decoded into a different case")
+            return
+        }
+        #expect(diagnostic?.code == -1202)
     }
 }

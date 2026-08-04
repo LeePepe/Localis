@@ -660,8 +660,20 @@ struct BridgeClientTests {
     func transportFailureIsUnreachable() async throws {
         let http = StubStreamingHTTP(responses: [.failure(URLError(.cannotConnectToHost))])
 
-        await #expect(throws: LocalisError.unreachable) {
+        // Matches the case, not the whole value. Since #34 the error carries the
+        // OS's domain and code, so `throws: LocalisError.unreachable()` would
+        // assert the diagnostic is *absent* — the opposite of what this path now
+        // does — and the test would fail for a reason unrelated to its name.
+        // What it has always been about is the category: a socket failure must
+        // not read as a malformed response.
+        do {
             _ = try await Self.client(http).models()
+            Issue.record("expected the socket failure to surface")
+        } catch let error as LocalisError {
+            guard case .unreachable = error else {
+                Issue.record("expected .unreachable, got \(error)")
+                return
+            }
         }
     }
 

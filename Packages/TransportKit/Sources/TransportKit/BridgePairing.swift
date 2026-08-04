@@ -64,7 +64,14 @@ public struct BridgePairing: Sendable {
             // The Mac is asleep, off the network, or refusing connections.
             // Reporting this as a bad code sends the user to re-read a code
             // that was fine.
-            throw LocalisError.unreachable
+            //
+            // The cause is carried for the same reason as in `BridgeClient`
+            // (#34), and it matters more here than anywhere else: pairing is
+            // the first time this device talks to this Mac, so a rejected
+            // certificate surfaces as "can't reach it" at the exact moment the
+            // user has no working state to compare against. `-1202` in a log is
+            // the difference between that and a Mac that is genuinely asleep.
+            throw LocalisError.unreachable(diagnostic: TransportDiagnostic(error))
         }
 
         try Self.checkStatus(response.statusCode)
