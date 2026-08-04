@@ -8,6 +8,10 @@
  *
  * This file is the ONLY place hex literals may appear. Everything else in the
  * prototype consumes CSS custom properties.
+ *
+ * Extended for iOS 26 Liquid Glass: the `--glass-*` and `--fade-*` tokens are
+ * derived from the same neutral ramp, so translucent chrome re-themes with the
+ * seed and the mode like everything else. See `glassTokens`.
  */
 (function (global) {
   'use strict';
@@ -53,6 +57,14 @@
     return 'rgb(' + to255(r) + ' ' + to255(g) + ' ' + to255(b) + ')';
   }
 
+  /** Hex -> `rgb(r g b / a)`, for the translucent Liquid Glass materials. */
+  function rgba(hex, a) {
+    var c = hexToRgb(hex);
+    var to255 = function (x) { return Math.round(clamp(x) * 255); };
+    return 'rgb(' + to255(c[0]) + ' ' + to255(c[1]) + ' ' + to255(c[2]) +
+      ' / ' + a + ')';
+  }
+
   function relLuminance(r, g, b) {
     var lin = function (x) {
       return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
@@ -60,10 +72,27 @@
     return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
   }
 
+  /**
+   * Label color for a filled accent surface.
+   *
+   * NOT the naive "pick whichever of black/white has the higher contrast
+   * ratio": on a saturated mid-tone like Apple Blue (#007AFF) that arithmetic
+   * picks BLACK (5.23 vs 4.02), which passes WCAG and still looks broken —
+   * every platform ships white there, and users read it as a rendering fault.
+   *
+   * The rule instead: white unless white would fall below the 3.0 floor for
+   * large/bold text, which is what a button label is. That yields white on
+   * blue / purple / teal / red and black on orange / yellow / lime — correct
+   * for every preset seed, and it still degrades safely for a seed nobody
+   * has tried yet.
+   */
+  var ON_COLOR_MIN_CONTRAST = 3.0;
+
   function onColor(hex) {
     var c = hexToRgb(hex);
     var L = relLuminance(c[0], c[1], c[2]);
-    return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#ffffff' : '#000000';
+    var whiteContrast = 1.05 / (L + 0.05);
+    return whiteContrast >= ON_COLOR_MIN_CONTRAST ? '#ffffff' : '#000000';
   }
 
   var SEEDS = {
@@ -135,6 +164,39 @@
     dark: { success: '#30D158', warning: '#FF9F0A', danger: '#FF453A' }
   };
 
+  /**
+   * Liquid Glass materials (iOS 26).
+   *
+   * Elevation on floating chrome is now material + inset, not a luminance
+   * tier. Two opacities on purpose:
+   *
+   *   --glass         translucent, for chrome whose content is short and
+   *                   high-contrast (tab labels, an icon, a status pill)
+   *   --glass-solid   markedly more opaque, for chrome that carries running
+   *                   text you must actually read (search field, composer)
+   *
+   * The second one exists because Liquid Glass's documented failure mode is
+   * body text over a busy backdrop. Where legibility and translucency
+   * conflict, legibility wins and we spend the material budget elsewhere.
+   */
+  function glassTokens(n, isDark) {
+    return {
+      '--glass': rgba(n.card, isDark ? 0.58 : 0.70),
+      '--glass-solid': rgba(n.card, isDark ? 0.88 : 0.92),
+      // Specular edge: a bright hairline on top, the neutral border below.
+      '--glass-line': rgba(n.text1, isDark ? 0.00 : 0.09),
+      '--glass-highlight': isDark ? rgba(n.text1, 0.16) : rgba(n.card, 0.85),
+      // The only shadows in the system, and only under floating chrome.
+      '--glass-shadow': isDark
+        ? '0 8px 26px rgb(0 0 0 / 0.55), 0 1px 3px rgb(0 0 0 / 0.4)'
+        : '0 8px 24px ' + rgba(n.text1, 0.14) + ', 0 1px 2px ' + rgba(n.text1, 0.08),
+      // Progressive edge fade — content dissolving under floating chrome.
+      '--fade-0': rgba(n.bg, 0),
+      '--fade-1': rgba(n.bg, isDark ? 0.72 : 0.78),
+      '--fade-2': rgba(n.bg, isDark ? 0.96 : 0.97)
+    };
+  }
+
   function buildTokens(seedHex, neutral, isDark) {
     var p = makePrimaryPalette(seedHex, isDark);
     var n = NEUTRAL[neutral][isDark ? 'dark' : 'light'];
@@ -164,6 +226,9 @@
       '--danger': sem.danger
     };
     charts.forEach(function (c, i) { vars['--chart-' + (i + 1)] = c; });
+
+    var glass = glassTokens(n, isDark);
+    Object.keys(glass).forEach(function (k) { vars[k] = glass[k]; });
     return vars;
   }
 

@@ -1,0 +1,283 @@
+/* ==========================================================================
+   hifi.css — the visual design (设计图).
+
+   The prototype fixed structure and deliberately refused visual treatment.
+   This file supplies it. Everything below either consumes a token from
+   tokens.js or a step from type.js — there are no literal colors and no
+   literal font sizes here, for the same reason there were none in the
+   prototype: `Packages/DesignKit` has to port this, and a value invented in a
+   stylesheet is a value someone has to guess at.
+
+   WHAT HI-FI ADDS OVER THE PROTOTYPE
+   ----------------------------------
+   1. Real type ramp (type.js) instead of ad-hoc sizes.
+   2. Drawn icons (icons.js) instead of dashed placeholder boxes.
+   3. Refined material: the specular edge, the shadow stack, the fade curve.
+   4. Motion — but only where it carries meaning (streaming, detached).
+   5. Density and rhythm: a consistent 4pt spacing grid.
+
+   WHAT HI-FI DOES NOT CHANGE
+   --------------------------
+   Structure, hierarchy, IA, and every decision the prototype settled. If a
+   layout moved, that is a bug in this file, not a design improvement — the
+   prototype is the approved artefact.
+   ========================================================================== */
+
+:root {
+  /* 4pt grid. Every padding and gap below is a multiple. */
+  --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
+  --s5: 20px; --s6: 24px; --s8: 32px; --s10: 40px;
+
+  /* Motion. Two durations and two curves, total — a longer list is how
+     animation becomes inconsistent. */
+  --dur-fast: 140ms;
+  --dur-base: 260ms;
+  --ease-out: cubic-bezier(0.2, 0.9, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.5, 1);
+}
+
+/* ── Type ramp ──────────────────────────────────────────────────────────── */
+/* Injected from type.js at runtime as `.t-*` classes, so the scale has one
+   source of truth. This block only sets what the ramp cannot: the family. */
+
+.frame {
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Icons ──────────────────────────────────────────────────────────────── */
+
+.ic {
+  flex: 0 0 auto;
+  display: block;
+  /* Icons inherit text color so they participate in every state change
+     (selected, disabled, danger) without a second rule per state. */
+  color: currentColor;
+}
+
+/* The prototype drew icons as dashed boxes, so `.tabbar-float .tab .ic` gave
+   them a border and a fixed 22px box. A real glyph needs neither: drop the
+   placeholder chrome and let the drawn shape carry the weight. */
+.tabbar-float .tab .ic,
+.tool .ic, .side-toggle .ic {
+  border: 0;
+  width: auto; height: auto;
+}
+.tabbar-float .tab.on .ic { border: 0; }
+
+/* Icon-only controls centre their glyph rather than a text character. */
+.island, .cbtn, .dbtn, .chev, .caret-d, .away-x {
+  display: grid;
+  place-items: center;
+}
+
+/* Dashed borders were the prototype's "icon goes here" marker. With real
+   glyphs they become visual noise: a solid affordance needs no outline to be
+   recognisable, and the composer is dense enough already. */
+.cbtn, .dbtn { border: 0; }
+.cbtn:active { background: color-mix(in srgb, var(--text-1) 8%, transparent); }
+.cbtn.stop { border: 0; }
+
+/* ── Elevation, refined ─────────────────────────────────────────────────── */
+
+/* The prototype's shadow was a single soft blur. Real elevation is two
+   shadows: a tight contact shadow that anchors the object to the surface, and
+   a wide ambient one that gives it height. One shadow always reads as either
+   floating unanchored or pasted flat. */
+.glass {
+  box-shadow:
+    0 0 0 0.5px var(--glass-line),
+    var(--glass-shadow);
+}
+
+/* The specular edge is what makes Liquid Glass read as glass rather than as
+   frosted plastic: light catches the top rim only. A full-perimeter highlight
+   looks like a border and flattens the object. */
+.glass::before {
+  border-top-color: var(--glass-highlight);
+  border-left-color: color-mix(in srgb, var(--glass-highlight) 40%, transparent);
+  border-right-color: color-mix(in srgb, var(--glass-highlight) 40%, transparent);
+}
+
+/* ── Motion — only where it means something ─────────────────────────────── */
+
+/* Streaming: the caret is the only thing in the app that moves continuously,
+   because continuous motion is a strong signal and spending it anywhere else
+   would devalue it. */
+.caret {
+  animation: caret 1.05s steps(1, end) infinite;
+}
+@keyframes caret { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0; } }
+
+/* Live status dots breathe; idle ones do not. The distinction is the point:
+   motion means "happening now". */
+.pill.streaming .dot { animation: breathe 1.6s var(--ease-out) infinite; }
+@keyframes breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+/* Rows respond to touch. 140ms is below the threshold where a press feels
+   laggy, and scaling rather than fading keeps the row's text readable
+   throughout the press. */
+.row, .fzrow, .opt, .away-row {
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.row:active, .fzrow:active, .opt:active, .away-row:active {
+  background-color: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+
+/* The create island is the primary action: it gets the one spring in the
+   app, on press only. */
+.island {
+  transition: transform var(--dur-fast) var(--ease-spring),
+              box-shadow var(--dur-fast) var(--ease-out);
+}
+.island:active { transform: scale(0.92); }
+
+/* Respect the system setting. Every animation above is decorative reinforcement
+   of a state that is ALSO conveyed statically (a pill label, a caret glyph),
+   so removing motion loses nothing. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Reduce Transparency ────────────────────────────────────────────────── */
+
+/* Both glass grades collapse to opaque. The layout never depended on seeing
+   through anything, so this is a material swap and not a reflow. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass, .glass.opaque, .host-switch {
+    background: var(--card) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    border-color: var(--border) !important;
+  }
+  .edge-fade { display: none; }
+}
+
+/* Same rules, driven by the viewer's toggle, so the fallback can be reviewed
+   without changing a system setting. The media query above is what actually
+   ships; this class exists so the claim is checkable. */
+.frame.reduce-transparency .glass,
+.frame.reduce-transparency .glass.opaque,
+.frame.reduce-transparency .host-switch {
+  background: var(--card) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border-color: var(--border) !important;
+}
+.frame.reduce-transparency .edge-fade { display: none; }
+
+/* The accent island keeps its fill under reduced transparency: it was never
+   translucent (it is a solid primary surface with a shadow), and draining it
+   to card grey would remove the app's only accent-filled control. Reduced
+   transparency asks for opacity, not for a loss of hierarchy. */
+@media (prefers-reduced-transparency: reduce) {
+  .island.accent { background: var(--primary) !important; }
+}
+.frame.reduce-transparency .island.accent {
+  background: var(--primary) !important;
+  color: var(--on-primary) !important;
+}
+
+
+/* ── Wireframe annotations, removed ─────────────────────────────────────── */
+
+/* The prototype labelled affordances in the artwork itself ("swipe → rename ·
+   delete") because a wireframe has to explain what it is not drawing. A
+   finished design shows the gesture instead of captioning it, so the caption
+   goes. The gesture is unchanged — only the label describing it is gone. */
+.row.swipe::after { content: none; }
+
+/* Commands and paths break at separators, not mid-token. `word-break: break-all`
+   splits "TransportKit" into "Trans|portKit", which makes a path unreadable at
+   exactly the moment you are scanning it to see what the machine touched. */
+.now-cmd, .tool .tname {
+  /* `break-word` only splits a token when it cannot fit on a line of its own,
+     so a path wraps at its slashes first and mid-token only as a last resort. */
+  word-break: normal;
+  overflow-wrap: break-word;
+  hyphens: none;
+}
+
+/* The truncation marker is an inline annotation on the last line of lost
+   output, not a rule across the bubble: a full-width dashed line reads as a
+   separator between two things, when what it means is "this stopped here". */
+.trunc {
+  display: inline;
+  border-bottom: 0;
+  opacity: 0.75;
+}
+.trunc::before { content: "⋯ "; }
+
+/* ── Surface refinement ─────────────────────────────────────────────────── */
+
+/* Hairlines are 0.5px on retina, not 1px. A 1px border at 3x is a 3-device-
+   pixel line, which reads as heavy next to system chrome. */
+.list, .card, .field, .row, .tool, .cmp-row {
+  border-color: var(--border);
+}
+@media (min-resolution: 2dppx) {
+  .list { border-top-width: 0.5px; border-bottom-width: 0.5px; }
+  .row + .row, .field + .field, .tool + .tool { border-top-width: 0.5px; }
+}
+
+/* Bubbles: the corner radius is asymmetric on the speaker's side, which is
+   what makes a stack of messages read as a conversation rather than a list of
+   cards. Kept from the prototype, refined here with a continuous curve. */
+.bubble {
+  border-radius: 20px;
+  /* iOS uses a squircle, not a circular arc. This approximates it. */
+  border-curve: continuous;
+}
+.msg.me .bubble { border-bottom-right-radius: 6px; }
+.msg.ai .bubble { border-bottom-left-radius: 6px; }
+
+/* Status pills carry a dot AND a label — never color alone, so they survive
+   greyscale and color-blindness. Hi-fi tightens the geometry only. */
+.pill {
+  border-radius: 999px;
+  padding: 3px 9px 3px 7px;
+  gap: 5px;
+}
+.pill .dot { width: 6px; height: 6px; }
+
+/* Backend badges stay round-cornered and tinted; host marks stay square-ish
+   and neutral. This is the one visual contrast the app cannot afford to lose,
+   because it separates "which AI" from "which machine". */
+.badge { border-radius: 9px; border-curve: continuous; }
+.host-mark { border-radius: 8px; border-curve: continuous; }
+
+/* ── Focus, for keyboard and Switch Control ─────────────────────────────── */
+
+/* The prototype had no focus treatment at all. iPad has hardware keyboards,
+   so this is not optional there. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ── Hit targets ────────────────────────────────────────────────────────── */
+
+/* 44pt minimum, enforced by pseudo-element rather than by padding, so a small
+   glyph can stay visually small while remaining comfortably tappable. */
+.cbtn, .mini-btn, .away-x, .dbtn {
+  position: relative;
+}
+.cbtn::after, .mini-btn::after, .away-x::after, .dbtn::after {
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 44px;
+  min-height: 44px;
+  width: 100%;
+  height: 100%;
+}

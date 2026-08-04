@@ -1,0 +1,309 @@
+/* ==========================================================================
+   pad.css — the iPad layer (pass B).
+
+   Separate from glass.css and styles.css for the same reason those are
+   separate from each other: this file is the entire delta between the iPhone
+   layout and the iPad one, so it can be read as a spec rather than diffed
+   out of the rest.
+
+   THE RULE IT RE-DERIVES
+   ----------------------
+   iPhone put the reachable controls at the BOTTOM. That was never a rule
+   about the bottom — it was a rule about where the thumb is. An 11-inch iPad
+   is not held one-handed, and iPadOS 26 floats the tab bar at the TOP of the
+   window. So the same rule produces a different answer here, and the answer
+   is the platform's: destinations and search go to the top chrome; the two
+   things you still reach for with a resting thumb (create, compose) stay at
+   the bottom of their own column.
+
+   WHAT DOES NOT CHANGE
+   --------------------
+   The material, the tokens, the seed, status-as-pill, and `(host, backend)`
+   identity. An iPad screen is built from the same partials as a phone screen.
+   ========================================================================== */
+
+:root {
+  /* 11-inch iPad, landscape. Portrait is the same layout with the sidebar
+     collapsed by default — see screen 08. */
+  --pad-w: 1194px;
+  --pad-h: 834px;
+  --pad-side-w: 352px;
+  /* Reading measure for transcript body copy. A 1194pt-wide line of prose is
+     unreadable; the extra canvas buys CONTEXT (two panes), not longer lines. */
+  --pad-measure: 700px;
+}
+
+/* ── The iPad frame ─────────────────────────────────────────────────────── */
+
+.frame.pad {
+  width: var(--pad-w);
+  height: var(--pad-h);
+  border-radius: 28px;
+  border-width: 12px;
+}
+.frame-wrap.pad { width: var(--pad-w); }
+.frame.pad .notch { display: none; }          /* no notch on this iPad */
+.frame.pad .home-ind { width: 260px; }
+.frame.pad .status-bar {
+  height: 34px;
+  padding: 0 24px 4px;
+  font-size: 13px;
+}
+
+/* Viewer scaling. An iPad frame is ~3x the area of a phone frame, so on the
+   board it takes a full row of its own rather than wedging into the phone
+   grid — the alternative is two overlapping frames and a broken row. */
+.board .frame-slot.pad {
+  width: calc(var(--pad-w) * 0.42);
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: none;
+}
+.board .frame-slot.pad .caption { width: calc(var(--pad-w) * 0.42); }
+.board .frame-slot.pad .frame-wrap { transform: scale(0.42); }
+.board .frame-slot.pad .frame-holder {
+  width: calc(var(--pad-w) * 0.42);
+  height: calc(var(--pad-h) * 0.42);
+}
+
+.device .frame-wrap.pad { transform: scale(0.58); transform-origin: top left; }
+.device .frame-holder.pad {
+  width: calc(var(--pad-w) * 0.58);
+  height: calc(var(--pad-h) * 0.58);
+}
+
+/* ── Top chrome: the iPadOS 26 floating tab bar ─────────────────────────── */
+
+.pad-chrome {
+  flex: 0 0 auto;
+  position: relative;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  padding: 0 21px;
+  z-index: 28;
+}
+/* Sidebar toggle sits outside the bar, at the leading edge, where the window
+   controls would be. */
+.pad-chrome .lead,
+.pad-chrome .trail {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pad-chrome .trail { justify-content: flex-end; }
+
+.side-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.side-toggle .ic {
+  width: 20px; height: 16px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  position: relative;
+  opacity: 0.8;
+}
+.side-toggle .ic::after {
+  content: "";
+  position: absolute;
+  left: 5px; top: -1px; bottom: -1px;
+  width: 1px;
+  background: currentColor;
+}
+.side-toggle.off .ic::after { opacity: 0.35; }
+
+/* Same capsule, same material, same 11pt-family type as the phone tab bar —
+   only the edge it is anchored to changes. */
+.tabbar-float.top {
+  flex: 0 0 auto;
+  height: 46px;
+  padding: 0 5px;
+  gap: 2px;
+}
+.tabbar-float.top .tab {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 15px;
+  font-size: 13px;
+}
+.tabbar-float.top .tab .ic { width: 18px; height: 18px; font-size: 10px; }
+.tabbar-float.top .tab.search { width: auto; padding: 0 13px; margin-left: 4px; }
+.tabbar-float.top .tab.search::before { top: 9px; bottom: 9px; }
+
+/* ── The split ──────────────────────────────────────────────────────────── */
+
+.pad-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+/* The sidebar is IN-FLOW, not floating — so by the rule in glass.css it is
+   flat, not glass. It also holds the densest running text in the app
+   (session previews), which is exactly where translucency is criticised. */
+.pad-side {
+  flex: 0 0 auto;
+  width: var(--pad-side-w);
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+}
+.pad-side-head { flex: 0 0 auto; padding: 4px 16px 10px; }
+.pad-side-scroll {
+  flex: 1 1 auto;
+  overflow: hidden;
+  padding-bottom: 92px;
+}
+/* Sidebar rows sit directly on the sidebar surface, so they drop the card
+   tier they carry on the phone. */
+.pad-side .list { background: transparent; border: 0; }
+.pad-side .row { padding: 11px 14px; }
+.pad-side .row .chev { display: none; }
+/* The meta row carries backend·host + status + skill. That fits a 390pt
+   phone but not a 352pt sidebar, so it wraps instead of clipping — a
+   truncated status pill would be worse than a second line. */
+.pad-side .row .rmeta { flex-wrap: wrap; row-gap: 5px; }
+
+/* Selection is a first-class, persistent state on iPad — the detail pane is
+   always showing one of these rows, unlike the phone's push-and-pop. */
+.pad-side .row.sel {
+  background: color-mix(in srgb, var(--primary) 11%, transparent);
+  position: relative;
+}
+.pad-side .row.sel::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary);
+}
+.pad-side .row.sel .rtitle { color: var(--primary-text); }
+
+/* Create stays at the bottom of its column, but moves to the LEADING corner:
+   the trailing corner of this column now abuts the composer in the next pane,
+   and two accent controls a few points apart would compete. */
+.pad-side-dock {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  z-index: 26;
+  display: flex;
+  padding: 0 18px 20px;
+  pointer-events: none;
+}
+.pad-side-dock > * { pointer-events: auto; }
+.pad-side-dock .island { width: 52px; height: 52px; }
+
+/* ── Detail pane ────────────────────────────────────────────────────────── */
+
+.pad-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.pad-detail-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 21px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.pad-detail-head .dt { font-size: 17px; font-weight: 650; }
+.pad-detail-head .ds {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+.pad-detail-head .dacts {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pad-detail-head .dbtn {
+  width: 34px; height: 34px;
+  border-radius: 999px;
+  display: grid; place-items: center;
+  border: 1px dashed var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.pad-detail-body { flex: 1 1 auto; overflow: hidden; position: relative; }
+
+/* Body copy is capped at a reading measure and centred. The gutters are
+   deliberate: they are what makes a 1194pt window readable. */
+.measure {
+  max-width: var(--pad-measure);
+  margin: 0 auto;
+  width: 100%;
+}
+.pad-detail .thread { padding-left: 0; padding-right: 0; }
+
+/* The composer matches the measure rather than the window, and floats the
+   same 21pt from the bottom of its own pane. */
+.composer-float.pad {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: min(var(--pad-measure), calc(100% - 42px));
+  bottom: 21px;
+}
+
+/* Hardware-keyboard hint. iPad users have a keyboard often enough that the
+   shortcut belongs on screen, not only in a menu. */
+.kbd {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+
+/* ── Empty / focused states ─────────────────────────────────────────────── */
+
+.pad-gutter-note {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 132px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+  text-align: center;
+}
+.pad-gutter-note.l { left: 18px; }
+.pad-gutter-note.r { right: 18px; }
+
+/* Keyboard-shortcut hint row above the iPad composer. Its own row rather than
+   trailing the input, so it never competes with the text you are writing. */
+.kbdrow {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 2px 6px;
+}
