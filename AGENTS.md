@@ -231,6 +231,18 @@ The rules that come out of this, in order of how often they save us:
    the work was **outside** the loop it appeared to sit in, in a
    `if status == .streaming` block indented to look like the loop body. Which
    lines belong to which scope is a thing to check, not to read.
+
+   The general form, and the version to remember, is about the *verdict* rather
+   than the code: **an aggregate signal fed by several sources is evidence for
+   none of them individually.** A gate script's self-test judged success by exit
+   code alone. Blinding one of its three probes — replacing the phrase that
+   probe looks for with something the compiler never emits — left the self-test
+   green, because the other two probes still made the run exit non-zero. "Exit
+   non-zero" had never been evidence that probe one could see anything. The
+   repair was to read three signals that cannot substitute for each other, and
+   to slice the output *by section* rather than grepping globally for a failure
+   marker — a global grep is satisfied by exactly the sources you are trying to
+   rule out.
 3. **"More carefully" is not a fix.** It does nothing for a stale read, a wrong
    ref, or a misused tool — three things that have each bitten us. Change the
    procedure, not the diligence.
@@ -427,7 +439,26 @@ The rules that come out of this, in order of how often they save us:
 
     Generally: when a gate fires, separate **what it matched** from **what it
     is for**. They agree often enough that the gap only shows up in the cases
-    that matter.
+    that matter. And note the asymmetry that makes this worth a rule: an
+    accidental gap gets closed by whoever trips over it, while a gap implied by
+    the rule's own definition never does. Matching `Bearer <literal>` cannot
+    ever see a credential held in a variable — not this time, not next time.
+19. **Ask where a gate sits, not just whether it exists.** A pre-commit hook
+    section landed above section 3 on purpose: section 3 opens by exiting 0 for
+    any commit that touched no package, so a check placed below it would be
+    skipped by commits that change only the checker — precisely when it most
+    needs to run. The same shape, one layer up, is why CI never ran a single
+    pinning assertion (#37): the suite exists, is correct, and lives behind a
+    gate CI does not open.
+
+    A check installed where its own failure case cannot reach it is
+    indistinguishable, from the outside, from a check that passes.
+
+    Whether a gate blocks or advises is a separate call, and it turns on
+    whether the thing is green today. A check that is green blocks, because a
+    red then means something that held has stopped holding. A check that is
+    already red can only advise, or people learn to bypass the hook wholesale —
+    and bypassing takes every other check in it down as well.
 
 ## Hooks
 
