@@ -98,8 +98,32 @@ final class HostListModel {
     /// anything the user asked to see.
     private func refreshReachability(of hosts: [LocalisHost]) async {
         let probe = self.probe
+        // **Only machines we could actually connect to are asked, and the reason
+        // is a false sentence rather than a wasted request.** A machine that was
+        // never paired has no token: `HostCredentialStore.token(for:)` returns
+        // nil, `BridgeClient.request` refuses with `.unauthorized`,
+        // `HostReachability(failure:)` maps that to `.unauthorized`, and its
+        // wording is "This Mac **no longer** accepts this device." Said about a
+        // `.discovered` machine every word of that is false — and it sends the
+        // user to pair, which is the right action reached through a wrong
+        // reason, so the working outcome would hide it. (Traced by `store` while
+        // building its own version of this; the test below is adapted from it.)
+        //
+        // **Here rather than inside each probe.** `HostProbing` has two
+        // implementations already and will have more; "which machines does the
+        // host list ask about" is the list's policy, and a copy of it in every
+        // probe is the shape that let a rejected certificate read as "check the
+        // network" (#45) — two places holding an opinion that has to agree.
+        // `BridgeHostProbe` keeps its own guard as well, for callers that do not
+        // come through here; that one is a refusal to open a socket, this one is
+        // a decision about who to ask.
+        //
+        // `canConnect`, not `pairingState == .paired`: it is the same question
+        // plus a pin, which also covers `.paired` with the pin gone — a Keychain
+        // cleared, or #30's credential-clearing path stopping half way.
+        let askable = hosts.filter(\.canConnect)
         let measured = await withTaskGroup(of: (HostID, HostReachability).self) { group in
-            for host in hosts {
+            for host in askable {
                 group.addTask { (host.id, await probe.reachability(of: host)) }
             }
             var results: [HostID: HostReachability] = [:]

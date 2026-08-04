@@ -26,19 +26,25 @@ import SessionStore
 /// the screen they had before.
 @Suite("A probe's answer reaches the host row")
 struct HostRowWiringTests {
-    /// Answers with whatever the test says, per host.
+    /// Answers with whatever the test says, per host, and records what it was
+    /// asked.
     ///
     /// **Does not derive the answer from the host.** A probe that returned
     /// `.unreachable` for, say, any host whose pairing state is
     /// `.certificateChanged` would be reading a stored fact and calling it a
     /// measurement — and a test built on it would pass against an
     /// implementation that never opened a connection.
-    private struct StubProbe: HostProbing {
+    ///
+    /// `asked` is not decoration. "The row stayed quiet" and "the machine was
+    /// never asked" can fail apart, and `notPairedMachinesAreNotProbed` is the
+    /// one test here that needs to tell them apart — see its note.
+    private actor StubProbe: HostProbing {
         let answers: [HostID: HostReachability]
         /// The answer for a host the test did not name. `.unknown` rather than
         /// `.reachable`, so a row that appears only because of a default cannot
         /// look like one that was measured.
         let fallback: HostReachability
+        private(set) var asked: [HostID] = []
 
         init(_ answers: [HostID: HostReachability], fallback: HostReachability = .unknown) {
             self.answers = answers
@@ -46,7 +52,8 @@ struct HostRowWiringTests {
         }
 
         func reachability(of host: LocalisHost) async -> HostReachability {
-            answers[host.id] ?? fallback
+            asked.append(host.id)
+            return answers[host.id] ?? fallback
         }
     }
 
@@ -165,7 +172,68 @@ struct HostRowWiringTests {
         #expect(badRow.unreachableDetail == HostUnreachableReason.certificateRejected.userMessage)
     }
 
-    /// A machine nobody could ask is not accused of being down.
+    /// A machine that was never paired is not asked, and says nothing.
+    ///
+    /// **Adapted from `store`'s `notPairedMachinesAreNotProbed`** (its #48
+    /// branch, which is not the one being merged). Brought over on team-lead's
+    /// ruling, and the ruling's argument is the reason it belongs: the guard it
+    /// covers is one line, and deleting that line turned nothing red here.
+    ///
+    /// **What it prevents is a confident false sentence, not a wasted request.**
+    /// `store` traced it through a nil token on 2026-08-04:
+    /// `HostCredentialStore.token(for:)` returns nil rather than throwing, so
+    /// `BridgeClient.request` refuses with `.unauthorized`,
+    /// `HostReachability(failure:)` maps that to `.unauthorized`, and its
+    /// sentence is "This Mac **no longer** accepts this device." About a
+    /// `.discovered` machine every word of that is false — and it sends the user
+    /// to pair, which is the right action reached through a wrong reason, so the
+    /// working outcome would hide the defect.
+    ///
+    /// **Both halves are asserted because they fail apart.** The row could stay
+    /// quiet while the request still went out — a pointless connection to a
+    /// machine we hold no credential for — or the machine could go unasked while
+    /// something else wrote a sentence onto its row. `asked` sees the first;
+    /// `unreachableDetail` sees the second.
+    @Test("a machine that was never paired is not probed, and says nothing")
+    func notPairedMachinesAreNotProbed() async throws {
+        let unpaired = Self.makeHost("Studio", state: .discovered, pinned: false)
+        // Answers `.unauthorized` if asked — the same answer the real
+        // credential-less path produces, so a probe that should not have
+        // happened arrives as the sentence it would have caused rather than as
+        // a silent extra connection.
+        let probe = StubProbe([unpaired.id: .unreachable(reason: .unauthorized)])
+        let model = try await Self.makeModel(hosts: [unpaired], probe: probe)
+
+        await model.load()
+
+        #expect(await probe.asked.isEmpty)
+        let row = try #require(await model.rows.first)
+        #expect(row.unreachableDetail == nil)
+        // The row is not silent overall: its pairing state is on screen, and
+        // that is both true and the action to take. Nothing is hidden by
+        // declining to add a second line.
+        #expect(row.status == HostRowState.statusText(for: .discovered))
+    }
+
+    /// A machine with a good pairing *is* asked — the control for the test above.
+    ///
+    /// Without this, the cheapest way to keep `notPairedMachinesAreNotProbed`
+    /// green forever is to stop probing altogether: `asked.isEmpty` holds
+    /// trivially for a build that never asks anyone, and every other test here
+    /// reads `rows` rather than `asked`, so none of them would notice which of
+    /// the two filters produced the silence.
+    @Test("a paired machine is asked")
+    func pairedMachinesAreProbed() async throws {
+        let host = Self.makeHost("Studio")
+        let probe = StubProbe([host.id: .reachable])
+        let model = try await Self.makeModel(hosts: [host], probe: probe)
+
+        await model.load()
+
+        #expect(await probe.asked == [host.id])
+    }
+
+    /// A machine with no answer is not accused of being down.
     ///
     /// `.unknown` renders as no sentence, which is the honest projection: the
     /// probe established nothing. Rendering it as a problem would put "isn't
