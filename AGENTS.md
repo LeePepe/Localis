@@ -283,6 +283,13 @@ The rules that come out of this, in order of how often they save us:
    that mutation could have killed it** — otherwise "prove the verdict can
    move" has been applied to everything except the proof itself.
 
+   The same trap catches stashed work. A `git stash` restored onto a different
+   base is not "my earlier change" — it is that change plus every assumption
+   its original base made, and here it referenced a type belonging to another
+   branch's work. Restoring it left the baseline red for a completely new
+   reason, which reads exactly like the old one. Rebuild the increment on the
+   current tree rather than replaying a stash across a base change.
+
    Three times this week the *control* was the thing that silently did nothing:
    a mutant overwritten by its own harness, a mutation structurally unable to
    kill, and a `--filter` naming a suite's display string instead of its
@@ -436,6 +443,15 @@ The rules that come out of this, in order of how often they save us:
     something true" but "**does a reader who trusts this end up in the right
     file**". A true message that indicts the wrong component is worse than a
     vague one, because it is actionable.
+
+    Sharper still: **the red can belong to a different component than the one
+    you are reading it about.** A mutation run came back red and was taken as
+    "the mutation was caught" — but the failure was in the harness's own
+    positive control, which had broken for an unrelated reason. A probe that is
+    itself broken emits reds that say nothing about the thing under test, and
+    they are indistinguishable from the reds you were hoping for. So when a
+    control fails, read *which* assertion failed before concluding anything;
+    "it went red" is not a result, it is a prompt to find out where.
 
     Two failures needing different responses must not share a marker. A façade
     checker printed `❌ the pinning seam is reachable from outside TransportKit`
