@@ -624,7 +624,7 @@ struct SwiftDataSessionRepositoryTests {
         let session = Self.makeSession()
         try await writer.create(session)
 
-        try await writer.save(session.withStatus(.error(.connectionLost), at: Self.t0))
+        try await writer.save(session.withStatus(.error(.connectionLost)))
 
         // A failure is a historical fact — nothing on next launch can re-derive
         // it, so losing it would show yesterday's failed conversation as idle.
@@ -642,7 +642,7 @@ struct SwiftDataSessionRepositoryTests {
         try await writer.create(session)
 
         // The app is killed mid-stream, leaving `streaming` on disk.
-        try await writer.save(session.withStatus(.streaming, at: Self.t0))
+        try await writer.save(session.withStatus(.streaming))
 
         let afterRelaunch = SwiftDataSessionRepository(container: store)
         let loaded = try #require(try await afterRelaunch.session(id: session.id))
@@ -658,7 +658,7 @@ struct SwiftDataSessionRepositoryTests {
         let repository = SwiftDataSessionRepository(container: store)
         let session = Self.makeSession()
         try await repository.create(session)
-        try await repository.save(session.withStatus(.idle, at: Self.t0))
+        try await repository.save(session.withStatus(.idle))
 
         try await repository.orphanSessions(ofHost: Self.hostA)
 

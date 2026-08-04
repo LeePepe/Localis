@@ -34,7 +34,7 @@ struct SessionHostBindingTests {
         let transformed = session
             .withTitle("Renamed", at: Self.later)
             .withBackendID("codex", at: Self.later)
-            .withStatus(.streaming, at: Self.later)
+            .withStatus(.streaming)
             .appending(Message(id: UUID(), role: .user, text: "hi", createdAt: Self.later), at: Self.later)
 
         #expect(transformed.hostID == Self.host)
@@ -78,24 +78,35 @@ struct SessionHostBindingTests {
         let message = Message(id: UUID(), role: .user, text: "keep me", createdAt: Self.created)
         let session = Self.makeSession(messages: [message])
 
-        let orphaned = session.orphaned(at: Self.later)
+        let orphaned = session.orphaned()
 
         #expect(orphaned.status == .orphaned)
         #expect(orphaned.messages == [message])
         #expect(!orphaned.canSend)
         #expect(orphaned.hostID == Self.host)
+        // The row does not move (#28). `updatedAt` is the session list's sort
+        // key and nothing renders it, so bumping it here would announce every
+        // conversation on an unpaired Mac as freshly active — at the exact
+        // moment they all became unsendable. Asserted in the model rather than
+        // only where it is called: this is a property of the transition, and
+        // `orphaned()` has no production caller yet to catch it downstream.
+        #expect(orphaned.updatedAt == session.updatedAt)
     }
 
     @Test("an orphaned session can be reactivated when its host returns")
     func reactivationRestoresSending() {
         // spec §Edge Cases: re-pairing a machine whose bridge id / SPKI matches
         // brings its orphaned sessions back.
-        let orphaned = Self.makeSession().orphaned(at: Self.later)
+        let session = Self.makeSession()
+        let orphaned = session.orphaned()
 
-        let revived = orphaned.reactivated(at: Self.later)
+        let revived = orphaned.reactivated()
 
         #expect(revived.status == .idle)
         #expect(revived.canSend)
+        // Re-pairing is not activity either: a Mac coming back does not mean
+        // any of its conversations received anything.
+        #expect(revived.updatedAt == session.updatedAt)
     }
 
     @Test("sending is only allowed from idle")
@@ -104,12 +115,32 @@ struct SessionHostBindingTests {
         // input rather than silently accept text that cannot be delivered.
         let session = Self.makeSession()
 
-        #expect(session.withStatus(.idle, at: Self.later).canSend)
-        #expect(!session.withStatus(.disconnected, at: Self.later).canSend)
-        #expect(!session.withStatus(.connecting, at: Self.later).canSend)
-        #expect(!session.withStatus(.streaming, at: Self.later).canSend)
-        #expect(!session.withStatus(.error(.unreachable), at: Self.later).canSend)
-        #expect(!session.withStatus(.orphaned, at: Self.later).canSend)
+        #expect(session.withStatus(.idle).canSend)
+        #expect(!session.withStatus(.disconnected).canSend)
+        #expect(!session.withStatus(.connecting).canSend)
+        #expect(!session.withStatus(.streaming).canSend)
+        #expect(!session.withStatus(.error(.unreachable)).canSend)
+        #expect(!session.withStatus(.orphaned).canSend)
+    }
+
+    @Test("no status change counts as activity")
+    func statusChangesNeverMoveTheRow() {
+        // The general form of the two assertions above, over every status.
+        //
+        // **Why this is worth its own test when `withStatus` no longer takes a
+        // timestamp to pass.** The signature is the guard, and a signature is
+        // exactly the kind of thing a later change reverts for a local reason —
+        // one caller that genuinely wants both, and `at:` comes back with a
+        // default. This fails the moment it does, and names the cost: the list
+        // silently re-sorts by "recently touched" while claiming to be sorted
+        // by activity (#28). Nothing errors, so nothing else would notice.
+        let session = Self.makeSession()
+
+        for status: SessionStatus in [
+            .disconnected, .connecting, .idle, .streaming, .error(.unreachable), .orphaned
+        ] {
+            #expect(session.withStatus(status).updatedAt == session.updatedAt)
+        }
     }
 
     @Test("history stays readable in every non-idle state")
@@ -120,7 +151,7 @@ struct SessionHostBindingTests {
         let session = Self.makeSession(messages: [message])
 
         for status: SessionStatus in [.disconnected, .connecting, .idle, .streaming, .error(.unreachable), .orphaned] {
-            #expect(session.withStatus(status, at: Self.later).messages == [message])
+            #expect(session.withStatus(status).messages == [message])
         }
     }
 

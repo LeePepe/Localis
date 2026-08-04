@@ -92,21 +92,59 @@ public struct Session: Identifiable, Codable, Hashable, Sendable {
         with(backendID: newBackendID, updatedAt: timestamp)
     }
 
-    public func withStatus(_ newStatus: SessionStatus, at timestamp: Date) -> Session {
-        with(updatedAt: timestamp, status: newStatus)
+    /// Returns a copy in a new status, **leaving `updatedAt` where it was**.
+    ///
+    /// **Why this takes no timestamp when its four neighbours above do.** Both
+    /// repositories order the session list by `updatedAt` descending
+    /// (`SwiftDataSessionRepository.swift:46` and `:55`,
+    /// `SessionRepository.swift:136`), and nothing anywhere renders the value —
+    /// `SessionRowState` has no time field at all. So the field is a sort key
+    /// and only a sort key, and writing it means exactly one thing to the user:
+    /// *this conversation just had activity, put it at the top.*
+    ///
+    /// A status change is not that. `.idle`, `.disconnected`, `.connecting`,
+    /// `.error` and `.orphaned` are facts about the link and about pairing —
+    /// they are entered by opening a screen, by a probe answering, by a Mac
+    /// being unpaired. None of those is the user receiving anything. When this
+    /// took a timestamp, opening a conversation that failed yesterday moved it
+    /// above conversations that had genuinely replied, which on screen is
+    /// indistinguishable from a new message. Nothing errors and nothing looks
+    /// broken; the list is quietly sorted by "recently viewed" while claiming
+    /// to be sorted by activity (#28).
+    ///
+    /// **The parameter is removed rather than left to callers to pass `nil`.**
+    /// Every real activity path already advances `updatedAt` on the line before
+    /// this one — `appending` when the turn is sent, `replacing` on each
+    /// streamed chunk — so the timestamp here was load-bearing at exactly one
+    /// of its four call sites, the one that was wrong. Keeping it would leave
+    /// the mistake writable and rely on each future caller re-deriving this
+    /// argument; deleting it makes "declare new activity" and "record a status"
+    /// two operations that cannot be performed by accident as one.
+    ///
+    /// A path that genuinely needs both says so in two lines:
+    /// `session.appending(message, at: now).withStatus(.streaming)`.
+    ///
+    /// This now matches `Message.withStatus(_:)`, which never took a timestamp.
+    public func withStatus(_ newStatus: SessionStatus) -> Session {
+        with(status: newStatus)
     }
 
     /// Marks the session read-only because its host was unpaired.
     ///
     /// FR-027: unpairing never deletes a message. The transcript stays intact
     /// and only sending is disabled; deletion happens only when the user asks.
-    public func orphaned(at timestamp: Date) -> Session {
-        withStatus(.orphaned, at: timestamp)
+    ///
+    /// No timestamp, per `withStatus`: unpairing a Mac would otherwise reorder
+    /// every conversation on it to the top of the list at the moment they all
+    /// became unsendable — the loudest possible presentation of the one event
+    /// that added no content.
+    public func orphaned() -> Session {
+        withStatus(.orphaned)
     }
 
     /// Brings a session back after its host was paired again.
-    public func reactivated(at timestamp: Date) -> Session {
-        withStatus(.idle, at: timestamp)
+    public func reactivated() -> Session {
+        withStatus(.idle)
     }
 
     private func with(
