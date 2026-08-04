@@ -167,6 +167,44 @@ struct HostRowReachabilityTests {
         #expect(row.isConnectable == false)
     }
 
+    /// The other side of that condition: `unknown` must stay connectable.
+    ///
+    /// **This is the test that distinguishes the right predicate from a value
+    /// that happens to work.** `isConnectable` must be false for
+    /// `unreachable` specifically, not for "anything that is not `reachable`".
+    /// Written the second way, every host is unconnectable until #41 supplies a
+    /// live probe — because until then every row is `.unknown` — and the symptom
+    /// is a dead host list that looks like broken UI rather than like a wrong
+    /// condition here.
+    ///
+    /// The reason is the one already written on `HostReachability`: treating
+    /// "not yet asked" as "down" makes the user disprove something nobody
+    /// measured. It applies to connectability exactly as it does to wording.
+    ///
+    /// Deliberately paired with a host that really is connectable, which is what
+    /// makes this able to fail — an unpaired fixture would report `false` for a
+    /// reason that has nothing to do with reachability, and the test would pass
+    /// against both predicates.
+    @Test("a host we have not probed yet is still connectable if its pairing is good")
+    func unknownReachabilityDoesNotBlockConnecting() {
+        let connectable = host(state: .paired).paired(pinning: SPKIHash(base64: "AAA="))
+        // Positive control: the fixture must be connectable on its own, or the
+        // assertion below could pass while measuring the pairing, not the probe.
+        #expect(connectable.canConnect)
+
+        let unknown = HostRowState(
+            host: connectable,
+            runtime: HostRuntimeState(reachability: .unknown)
+        )
+        let reachable = HostRowState(
+            host: connectable,
+            runtime: HostRuntimeState(reachability: .reachable)
+        )
+
+        #expect(unknown.isConnectable)
+        #expect(reachable.isConnectable)
+    }
+
     /// The default keeps every existing construction site honest.
     ///
     /// `HostListModel` has no transport yet (#41 supplies the live probe), so
