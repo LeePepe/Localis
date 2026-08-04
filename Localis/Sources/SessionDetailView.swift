@@ -56,9 +56,37 @@ final class SessionDetailModel {
             apply(session)
             await resolveBackend(for: session)
             loadError = nil
+            // Only now, and only if a backend was found. A restored session
+            // arrives `.disconnected` and nothing else in the app writes `.idle`
+            // back, so without this line the composer stays grey for every
+            // conversation that predates this launch (#25). It runs after
+            // `apply` so the transcript is on screen while the probe is in
+            // flight — reading is never gated (FR-036).
+            await reconnectIfPossible()
         } catch {
             loadError = (error as? LocalisError)?.userMessage ?? "Please try again."
         }
+    }
+
+    /// Asks the Mac whether this conversation can be continued, and shows the
+    /// answer.
+    ///
+    /// Silent when there is no backend to ask about: `resolveBackend` has
+    /// already put the reason on screen, and a second one would be the same
+    /// fact stated twice.
+    ///
+    /// Never throws and never sets `loadError`. An unreachable Mac is not a
+    /// failure to open the conversation — the transcript is fine, and the
+    /// composer's own `blockedReason` already says the link is down.
+    private func reconnectIfPossible() async {
+        guard let session, let backend else { return }
+
+        let reconnected = await service.reconnect(session, to: backend)
+        // Re-projected through the same path as every other snapshot, so the
+        // composer is derived from the session rather than being switched on
+        // here. A local `canSend = true` would be a second opinion, and the two
+        // would drift.
+        apply(reconnected)
     }
 
     /// Finds the backend this session names, on the host it belongs to.
