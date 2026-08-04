@@ -44,6 +44,44 @@ jobs:
         working-directory: Packages/${{ matrix.package }}
         run: swift test
 
+  # ---- Job A2: localis-bridge — the Mac-side gateway (ADR-0001) ------------
+  # A separate job rather than an entry in the matrix above: the bridge is not
+  # an SPM package of the app, it lives at the top level, and its tests spawn
+  # real subprocesses and open real TLS sockets. Folding it into the matrix
+  # would imply a `Packages/` path that does not exist.
+  bridge:
+    name: Bridge
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.5.app
+      - name: swift build
+        working-directory: bridge
+        run: swift build
+      - name: swift test
+        working-directory: bridge
+        run: swift test
+      # The shared-fixture test runs a second time, on purpose, through a
+      # script that fails when the filter matched *no* tests.
+      #
+      # That test compares this bridge's SSE vocabulary against the iOS side's
+      # `chat-stream.sse`, and its entire value is that an iOS edit to that file
+      # turns this job red. But `swift test` exits 0 when a filter matches
+      # nothing, so a renamed or deleted suite would disarm the check while CI
+      # kept printing green — and the person editing that fixture is on the iOS
+      # side, with no reason to be looking at bridge tests.
+      #
+      # The self-test runs first and is not redundant: it proves the guard can
+      # still fail. A guard that has quietly become incapable of failing is
+      # worse than no guard, because its green is read as agreement.
+      - name: Fixture check can still fail
+        working-directory: bridge
+        run: bash scripts/check-fixture-test.sh --self-test
+      - name: Bridge agrees with the iOS SSE fixture
+        working-directory: bridge
+        run: bash scripts/check-fixture-test.sh
+
   # ---- Job B: the app target — xcodegen + xcodebuild test on a simulator ----
   app:
     name: App target
