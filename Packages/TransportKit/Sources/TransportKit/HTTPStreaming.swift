@@ -64,7 +64,20 @@ extension PinnedHTTP: HTTPStreaming {
     func stream(
         _ request: URLRequest
     ) async throws -> (HTTPResponseHead, AsyncThrowingStream<[UInt8], Error>) {
-        let (bytes, response) = try await session.bytes(for: request)
+        // `delegate:` is a compile-time guard, not the fix itself. Measured
+        // against the real bridge: what actually routes the trust challenge here
+        // is `PinnedSessionDelegate` conforming to `URLSessionTaskDelegate` —
+        // drop this argument and keep the conformance and the pin is still
+        // enforced; drop the conformance and the handshake fails as -1202 with
+        // the delegate never consulted (#32).
+        //
+        // It stays because it is what makes the two inseparable: this argument
+        // will not type-check without the conformance, so removing the
+        // conformance breaks the build rather than silently unpinning every
+        // streamed request — which is the failure mode that made #32 invisible.
+        // Passing the session's own delegate rather than a fresh one keeps both
+        // paths judged by one pin.
+        let (bytes, response) = try await session.bytes(for: request, delegate: pinnedDelegate)
         guard let http = response as? HTTPURLResponse else {
             throw LocalisError.malformedResponse
         }

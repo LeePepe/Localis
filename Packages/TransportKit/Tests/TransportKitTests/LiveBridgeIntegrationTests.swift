@@ -169,6 +169,122 @@ struct LiveBridgeIntegrationTests {
         )
     }
 
+    /// The streamed path must be pinned by the same delegate as the plain one.
+    ///
+    /// **This is the test that was missing, and its absence hid a total
+    /// outage.** Every unit test of streaming uses a fake `HTTPStreaming`, so no
+    /// test in this package had ever caused a real TLS handshake on the streamed
+    /// path — and the streamed path is the one the product almost entirely uses:
+    /// `models()`, sending a message, and every SSE turn go through `stream`,
+    /// while only pairing goes through `perform`. "Pairing succeeds and then
+    /// nothing works" was therefore invisible to a fully green suite.
+    ///
+    /// The two are asserted **together, against one endpoint, with one pin**, so
+    /// the only difference between them is which `URLSession` API is called.
+    /// Asserting `stream` alone would leave "the bridge is unreachable right
+    /// now" as an explanation; `perform` succeeding in the same test rules that
+    /// out, because an unreachable bridge cannot answer one of them and not the
+    /// other.
+    ///
+    /// **What made this diagnosable at all** was the delegate's own record. The
+    /// error `bytes(for:)` produced was `-1202`, "the certificate for this
+    /// server is invalid" — which reads as a problem with the bridge's
+    /// certificate and sends whoever sees it to inspect the chain, the expiry,
+    /// the algorithm. The empty `outcomes` list says something completely
+    /// different: our delegate was never consulted, so the certificate was
+    /// judged by the system's default policy, which of course rejects a
+    /// self-signed one. Same symptom, different half of the system. That is why
+    /// this test asserts on the record and not only on the error.
+    @Test("the streamed path is pinned by the same delegate as the plain one")
+    func streamIsPinnedToo() async throws {
+        let endpoint = try LiveBridge.endpoint()
+        let pin = try LiveBridge.realPin()
+        let request = try LiveBridge.modelsRequest(endpoint: endpoint, token: "deliberately-invalid")
+
+        // The control: known to work, in the same process against the same host.
+        let plainLog = ChallengeLog()
+        _ = try await PinnedHTTP(pin: pin, observer: plainLog.record).perform(request)
+        #expect(
+            plainLog.all == [.proceeded],
+            "the control failed, so this test cannot say anything about streaming: recorded \(plainLog.all.map(\.rawValue))"
+        )
+
+        let streamLog = ChallengeLog()
+        let http = PinnedHTTP(pin: pin, observer: streamLog.record)
+
+        // Caught rather than propagated. When the streamed path is unpinned it
+        // throws -1202 *before* reaching any assertion, so a bare `try` would
+        // report only that error — the one that reads as "the bridge's
+        // certificate is bad" and sends the next reader to inspect the chain.
+        // The record is what distinguishes that from our own wiring, and it is
+        // only worth keeping if it survives into the failure message.
+        do {
+            let (head, _) = try await http.stream(request)
+            #expect(head.status > 0)
+        } catch {
+            Issue.record("""
+                the streamed request failed where the plain one to the same host \
+                with the same pin succeeded: \(error). Delegate recorded \
+                \(streamLog.all.map(\.rawValue)).
+                """)
+        }
+
+        #expect(
+            streamLog.all == [.proceeded],
+            """
+            expected the streamed request to be judged by PinnedSessionDelegate; \
+            recorded \(streamLog.all.map(\.rawValue)). An empty list means the \
+            streaming API bypassed the session delegate entirely, so the \
+            self-signed certificate fell through to the system's default policy \
+            — the -1202 that produces looks like a bad certificate but is our \
+            own wiring.
+            """
+        )
+    }
+
+    /// A wrong pin must refuse the *streamed* path too.
+    ///
+    /// Paired with `streamIsPinnedToo` deliberately. The obvious way to make
+    /// that test pass is to stop enforcing anything on the streamed path —
+    /// disable validation, accept any certificate — and it would go green while
+    /// making the product strictly less safe than the bug it replaced. This is
+    /// the test that makes that fix fail.
+    @Test("a streamed connection pinned to the wrong key is refused")
+    func streamWithWrongPinIsRefused() async throws {
+        let endpoint = try LiveBridge.endpoint()
+        let wrong = try LiveBridge.wrongButWellFormedPin()
+        #expect(wrong != (try LiveBridge.realPin()))
+
+        let outcomes = ChallengeLog()
+        let http = PinnedHTTP(pin: wrong, observer: outcomes.record)
+        let request = try LiveBridge.modelsRequest(endpoint: endpoint, token: "unused-the-tls-layer-should-refuse-first")
+
+        do {
+            _ = try await http.stream(request)
+            Issue.record("the streamed handshake completed against a pin the bridge cannot satisfy")
+        } catch let error as NSError {
+            #expect(
+                error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled,
+                """
+                expected the pin check to cancel the streamed challenge \
+                (NSURLErrorCancelled, \(NSURLErrorCancelled)); got \
+                \(error.domain) \(error.code). Note that -1202 here would mean \
+                the *system* rejected the certificate rather than our pin check \
+                — the connection would be refused, but for a reason that says \
+                nothing about pinning.
+                """
+            )
+        }
+
+        #expect(
+            outcomes.all == [.refused],
+            """
+            expected exactly one refusal on the streamed path; recorded \
+            \(outcomes.all.map(\.rawValue)).
+            """
+        )
+    }
+
     // MARK: - The scoped goal: pair, then GET /v1/models
 
     /// Six-digit code to token to a 200 from `/v1/models` (#31).

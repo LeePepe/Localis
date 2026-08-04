@@ -50,7 +50,7 @@ enum PinnedTrust {
 /// One delegate per host, holding one pin. Not a registry keyed by hostname:
 /// a shared delegate is a shared trust store by another name, and it would let
 /// host A's certificate satisfy a connection to host B (FR-028).
-final class PinnedSessionDelegate: NSObject, URLSessionDelegate, Sendable {
+final class PinnedSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, Sendable {
     private let pin: SPKIHash?
     private let observer: (@Sendable (ChallengeOutcome) -> Void)?
 
@@ -89,6 +89,42 @@ final class PinnedSessionDelegate: NSObject, URLSessionDelegate, Sendable {
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
+        decide(challenge, completionHandler)
+    }
+
+    /// The same decision, for challenges delivered to the **task** delegate.
+    ///
+    /// **This is the half that actually fixes #32.** Measured against the real
+    /// bridge, with the session-level method above already in place: without
+    /// this conformance the streamed handshake fails as `-1202`, "the
+    /// certificate for this server is invalid", and the observer records
+    /// nothing at all — the delegate was never consulted, so the self-signed
+    /// certificate was judged by the system's default policy, which of course
+    /// rejects it. Add the conformance back and the same request is judged by
+    /// the pin, whether or not the call site passes a task delegate.
+    ///
+    /// `-1202` reads as a problem with the *server's* certificate and sends
+    /// whoever sees it to inspect the chain, the expiry, the algorithm. The
+    /// empty record says something completely different, and is the only reason
+    /// this was diagnosable.
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        decide(challenge, completionHandler)
+    }
+
+    /// One decision, shared by both delegate entry points.
+    ///
+    /// Deliberately not duplicated per entry point: two copies of a trust rule
+    /// are two places for it to drift, and the whole failure this fixes was one
+    /// path being judged differently from another.
+    private func decide(
+        _ challenge: URLAuthenticationChallenge,
+        _ completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust else {
             // Not a server-trust challenge. We have nothing to offer and must
@@ -122,6 +158,16 @@ struct PinnedHTTP: HTTPPerforming {
     /// constructible from outside this package.
     let session: URLSession
 
+    /// The same delegate the session holds, kept so it can also be handed to
+    /// individual tasks.
+    ///
+    /// `URLSession`'s async APIs bypass the session delegate for authentication
+    /// challenges, so the streamed path has to pass this explicitly as a
+    /// task delegate. Reading it back off `session.delegate` would work but
+    /// would need a downcast at each use — and a downcast that silently fails
+    /// would restore exactly the unpinned behaviour this fixes.
+    let pinnedDelegate: PinnedSessionDelegate
+
     /// - Parameters:
     ///   - pin: the host's pinned SPKI. **Nil refuses every connection** —
     ///     `PinnedTrust.evaluate` treats absent history as absent permission, so
@@ -135,9 +181,11 @@ struct PinnedHTTP: HTTPPerforming {
         configuration: URLSessionConfiguration = .ephemeral,
         observer: (@Sendable (PinnedSessionDelegate.ChallengeOutcome) -> Void)? = nil
     ) {
+        let delegate = PinnedSessionDelegate(pin: pin, observer: observer)
+        pinnedDelegate = delegate
         session = URLSession(
             configuration: configuration,
-            delegate: PinnedSessionDelegate(pin: pin, observer: observer),
+            delegate: delegate,
             delegateQueue: nil
         )
     }
