@@ -52,9 +52,36 @@ enum PinnedTrust {
 /// host A's certificate satisfy a connection to host B (FR-028).
 final class PinnedSessionDelegate: NSObject, URLSessionDelegate, Sendable {
     private let pin: SPKIHash?
+    private let observer: (@Sendable (ChallengeOutcome) -> Void)?
 
-    init(pin: SPKIHash?) {
+    /// What the delegate did with one challenge.
+    ///
+    /// **Why this exists at all.** The third way pinning can fail is that this
+    /// delegate is never invoked — misconfigured session, a stray
+    /// `URLSession.shared`, a challenge type that never reaches us. From the
+    /// caller that failure is a connection error, indistinguishable from a
+    /// rejected certificate or an unreachable host, and it points at a
+    /// completely different cause. Inferring "the delegate ran" from an error
+    /// code is inference; this is a record.
+    ///
+    /// Carries no certificate bytes and no host identity — only which branch was
+    /// taken, so it can never become a channel for anything sensitive.
+    enum ChallengeOutcome: String, Sendable {
+        /// A server-trust challenge whose chain satisfied the pin.
+        case proceeded
+        /// A server-trust challenge whose chain did not satisfy the pin, or
+        /// which arrived with no pin to check against.
+        case refused
+        /// Not a server-trust challenge; cancelled without consulting the pin.
+        case notServerTrust
+    }
+
+    /// - Parameter observer: called once per challenge, with the branch taken.
+    ///   Nil in production — nothing in the app needs it, and a default of nil
+    ///   keeps every existing call site unchanged.
+    init(pin: SPKIHash?, observer: (@Sendable (ChallengeOutcome) -> Void)? = nil) {
         self.pin = pin
+        self.observer = observer
     }
 
     func urlSession(
@@ -67,6 +94,7 @@ final class PinnedSessionDelegate: NSObject, URLSessionDelegate, Sendable {
             // Not a server-trust challenge. We have nothing to offer and must
             // not fall back to the default handling, which could accept a
             // system-trusted certificate we never pinned.
+            observer?(.notServerTrust)
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
@@ -78,8 +106,10 @@ final class PinnedSessionDelegate: NSObject, URLSessionDelegate, Sendable {
             // The pin *replaces* CA validation — the bridge is self-signed, so
             // the system evaluation would fail on a certificate that is exactly
             // the one we pinned.
+            observer?(.proceeded)
             completionHandler(.useCredential, URLCredential(trust: trust))
         case .refuse:
+            observer?(.refused)
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
     }
@@ -92,12 +122,22 @@ struct PinnedHTTP: HTTPPerforming {
     /// constructible from outside this package.
     let session: URLSession
 
-    /// - Parameter pin: the host's pinned SPKI, or nil during pairing, when
-    ///   there is nothing to pin against yet.
-    init(pin: SPKIHash?, configuration: URLSessionConfiguration = .ephemeral) {
+    /// - Parameters:
+    ///   - pin: the host's pinned SPKI. **Nil refuses every connection** —
+    ///     `PinnedTrust.evaluate` treats absent history as absent permission, so
+    ///     nil is "cannot connect", not "trust on first use". Pairing therefore
+    ///     needs the pin it is about to verify, obtained out of band.
+    ///   - observer: see `PinnedSessionDelegate.ChallengeOutcome`. Nil in
+    ///     production; supplied by the live-bridge harness to record that the
+    ///     delegate ran at all rather than inferring it from an error code.
+    init(
+        pin: SPKIHash?,
+        configuration: URLSessionConfiguration = .ephemeral,
+        observer: (@Sendable (PinnedSessionDelegate.ChallengeOutcome) -> Void)? = nil
+    ) {
         session = URLSession(
             configuration: configuration,
-            delegate: PinnedSessionDelegate(pin: pin),
+            delegate: PinnedSessionDelegate(pin: pin, observer: observer),
             delegateQueue: nil
         )
     }
