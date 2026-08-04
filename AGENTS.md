@@ -142,6 +142,22 @@ Instances we actually hit, so you can recognise the family:
 | An empty session list | The demo seed needs a launch argument; an empty store looks like a broken list |
 | A `MERGED` pull request | Status field said merged; nobody had checked the content landed |
 | Two teammates' reads of the tree | Both true, for different refs, minutes apart |
+| `** TEST FAILED **` *and* exit 0, no test names | A stale `.xcodeproj` left a file out of the target; compilation failed and nothing ran |
+
+That last row is the mirror of every other one: they warn that a green may be
+nothing having run — it warns that **a red may be something else having failed**.
+It is the more dangerous direction, because a red arrives while you are holding
+an unverified change, and **any failure then looks like the one you just caused**.
+We nearly went back and "fixed" two correct assertions over it.
+
+One more, which is the inverse of "an unwritten invariant looks like an absent
+one": **a written-down defect looks like the only defect.** #25 was recorded,
+explained at length, and assigned — and that is plausibly why its second half
+(a session also latches unsendable on `.error`, which needs no relaunch at all)
+was found by the person implementing the fix rather than by anyone reviewing the
+report. Documenting "this area has a problem" quietly becomes "this area has
+*that* problem," and nobody re-asks the general question. When you write a
+defect down, say what you did *not* check.
 
 The rules that come out of this, in order of how often they save us:
 
