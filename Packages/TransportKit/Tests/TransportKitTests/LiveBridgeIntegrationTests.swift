@@ -212,8 +212,22 @@ struct LiveBridgeIntegrationTests {
         let streamLog = ChallengeLog()
         let http = PinnedHTTP(pin: pin, observer: streamLog.record)
 
-        let (head, _) = try await http.stream(request)
-        #expect(head.status > 0)
+        // Caught rather than propagated. When the streamed path is unpinned it
+        // throws -1202 *before* reaching any assertion, so a bare `try` would
+        // report only that error — the one that reads as "the bridge's
+        // certificate is bad" and sends the next reader to inspect the chain.
+        // The record is what distinguishes that from our own wiring, and it is
+        // only worth keeping if it survives into the failure message.
+        do {
+            let (head, _) = try await http.stream(request)
+            #expect(head.status > 0)
+        } catch {
+            Issue.record("""
+                the streamed request failed where the plain one to the same host \
+                with the same pin succeeded: \(error). Delegate recorded \
+                \(streamLog.all.map(\.rawValue)).
+                """)
+        }
 
         #expect(
             streamLog.all == [.proceeded],

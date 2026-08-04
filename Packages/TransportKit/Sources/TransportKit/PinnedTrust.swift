@@ -94,18 +94,19 @@ final class PinnedSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskD
 
     /// The same decision, for challenges delivered to the **task** delegate.
     ///
-    /// **Not redundant with the session-level method above.** `URLSession`'s
-    /// async APIs do not consult the session delegate for authentication:
-    /// `bytes(for:)` never calls `urlSession(_:didReceive:completionHandler:)`,
-    /// so a session configured exactly as this one is — pinned delegate and all
-    /// — falls back to the system's default trust evaluation, which rejects the
-    /// self-signed certificate the pin exists to accept. The symptom is
-    /// `-1202`, "the certificate for this server is invalid", which points at
-    /// the server rather than at the caller and reads as a certificate problem.
+    /// **This is the half that actually fixes #32.** Measured against the real
+    /// bridge, with the session-level method above already in place: without
+    /// this conformance the streamed handshake fails as `-1202`, "the
+    /// certificate for this server is invalid", and the observer records
+    /// nothing at all — the delegate was never consulted, so the self-signed
+    /// certificate was judged by the system's default policy, which of course
+    /// rejects it. Add the conformance back and the same request is judged by
+    /// the pin, whether or not the call site passes a task delegate.
     ///
-    /// Conforming to `URLSessionTaskDelegate` and passing this object as the
-    /// task delegate is what routes those challenges back here, so both the
-    /// plain and the streamed paths are judged by one pin (#32).
+    /// `-1202` reads as a problem with the *server's* certificate and sends
+    /// whoever sees it to inspect the chain, the expiry, the algorithm. The
+    /// empty record says something completely different, and is the only reason
+    /// this was diagnosable.
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
