@@ -44,7 +44,31 @@ if true; then
       [ -f "$file" ] && LINT_ARGS+=("$file")
     done <<< "$STAGED_SWIFT"
     if [ ${#LINT_ARGS[@]} -gt 0 ]; then
-      if ! "$SWIFTLINT_BIN" lint --quiet --strict -- "${LINT_ARGS[@]}"; then
+      # `--force-exclude` is not optional here, and it is not a loosening.
+      #
+      # Passing explicit file paths to swiftlint *overrides* the `excluded:`
+      # list in .swiftlint.yml — the paths win. CI runs `swiftlint lint
+      # --strict` with no paths, so it honours the exclusions; this hook passes
+      # the staged files, so without this flag it lints files the project has
+      # decided are out of scope (`Packages/*/Tests`, `LocalisTests`).
+      #
+      # The two gates then disagree, in the direction that wastes the most
+      # time: the hook blocks a commit over pre-existing fixture code that CI
+      # is perfectly happy with, in a file the author only touched incidentally.
+      # Hit for real on a three-line change to `SwiftDataSessionRepositoryTests`
+      # (#28), where what got flagged was two `UUID(uuidString:)!` constants
+      # that have been sitting on `main` untouched.
+      #
+      # This does not weaken the gate: a force unwrap under `Localis/` or
+      # `Packages/*/Sources` is still caught, verified with a planted one. It
+      # only stops the hook from judging files by a rule CI does not apply.
+      #
+      # Why it matters more than the keystrokes it saves: a local gate stricter
+      # than the remote one is what gets `--no-verify` reached for, and that
+      # switch disables *every* check below — the layer build, the wiring
+      # self-test, the frontmatter check — not the one that misfired. The hook
+      # is only worth obeying while its answer matches CI's.
+      if ! "$SWIFTLINT_BIN" lint --quiet --strict --force-exclude -- "${LINT_ARGS[@]}"; then
         echo "❌ SwiftLint errors in staged files. Commit aborted."
         exit 1
       fi
