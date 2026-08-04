@@ -66,6 +66,23 @@ struct TokenStorePersistenceTests {
     /// A revoke that lived only in memory would come back on the next restart,
     /// which is the worst direction for this bug to point: the user explicitly
     /// removed a device (FR-027) and it silently returns.
+    ///
+    /// **⚠️ This test guards that `revoke` is implemented correctly. It does not
+    /// guard that anything calls it — and nothing does.** `TokenStore.revoke`
+    /// has no production caller: there is no unpair route on the bridge, no
+    /// unpair request on iOS, and no unpair control in the UI. This test is the
+    /// method's only caller anywhere.
+    ///
+    /// The warning is here, next to the test, rather than only on the method,
+    /// because **the test is the misleading part**. A reader who finds a
+    /// well-argued, genuinely-failing test naturally infers that the thing it
+    /// covers is in use — the test's existence becomes the false signal. A
+    /// green test in front of unreachable code is better camouflage than no
+    /// test at all.
+    ///
+    /// Do not read this suite passing as "unpair works". It means "if unpair is
+    /// ever wired up, this half of it will not lose the user's decision on
+    /// restart".
     @Test("a revoked device does not come back after a restart")
     func revocationSurvivesRestart() async throws {
         let directory = try Self.temporaryDirectory()

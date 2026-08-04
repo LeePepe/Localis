@@ -98,11 +98,34 @@ public actor TokenStore {
         return matched
     }
 
+    /// Ends a device's pairing.
+    ///
+    /// **No production caller. Nothing on a phone can reach this today.**
+    /// Verified 2026-08-04 across all three segments of the path:
+    ///
+    /// | layer | state |
+    /// |---|---|
+    /// | iOS UI | no "unpair" control exists |
+    /// | iOS logic | `unpaired()` has zero callers |
+    /// | bridge | `Router` has no unpair route; this method's only caller is a test |
+    ///
+    /// Kept rather than deleted, on a deliberate ruling. The argument below for
+    /// *why* it must persist is the part worth keeping: it was reached once, and
+    /// whoever builds unpair would otherwise have to reach it again — possibly
+    /// without success, since the failure it prevents is invisible until a
+    /// restart.
+    ///
+    /// Building it now was considered and rejected: a route that calls this,
+    /// writes to disk, and answers `token_revoked` would be an end-to-end path
+    /// no client ever requests. That looks *more* finished than the present
+    /// state while being exactly as unreachable, which is harder to notice, not
+    /// easier. The order has to be UI entry point → iOS request → bridge route.
+    ///
+    /// Persisted immediately, and this direction matters more than issuance: a
+    /// revoke that lived only in memory would come back on the next restart,
+    /// undoing something the user explicitly asked for (FR-027).
     public func revoke(deviceID: String) {
         grants = grants.filter { $0.grant.deviceID != deviceID }
-        // Persisted immediately, and this direction matters more than issuance:
-        // a revoke that lived only in memory would come back on the next
-        // restart, undoing something the user explicitly asked for (FR-027).
         persist()
     }
 
