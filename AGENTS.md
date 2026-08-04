@@ -228,23 +228,44 @@ The rules that come out of this, in order of how often they save us:
     that it ran at all. In each case the mechanism was untested, not proven.
     Ask what would have had to happen for this check to speak, and whether it
     did — then record the answer rather than inferring it.
-13. **Break it *all* the way, or you have not broken it.** The habit in rule 1
-    is only as good as the break: a fix with two parts, reverted in one part,
-    stays green — and that green then argues the test is worthless. Someone was
-    told on the strength of it to delete a test that was, in fact, the only
-    thing guarding the defect. Re-running against the actual pre-fix commit put
-    it straight back to red.
+13. **Revert against the pre-fix commit, not against your memory of the fix.**
+    A fix with two parts, reverted in one part, stays green — and that green
+    then argues the test is worthless. Someone was told on the strength of it
+    to delete a test that was, in fact, the only thing guarding the defect.
 
-    What makes this worse than an ordinary mistake is that the reasoning had
-    already listed its own alternatives: *"it still passes"* means either the
-    fix does nothing or the test watches nothing — and enumerating those two
-    produced the confidence that the list was complete. It was missing the
-    third: **the revert was partial**. A list you wrote yourself is the last
-    place you will look for a gap.
+    The correction has a second layer that is the actual lesson. The first
+    account of this was "I reverted the wrong half" — an execution slip. A
+    three-arm control run afterwards showed something else: **the load was not
+    on the half anyone thought.** Removing the delegate argument changed
+    nothing at runtime; the `URLSessionTaskDelegate` conformance was doing all
+    the work; and removing the conformance alone does not compile. So the
+    half-revert's green was the *correct answer to the question it asked*, and
+    the apology that followed it was itself misattributed. A wrong diagnosis
+    can survive being apologised for — the apology closes the file.
 
-    So when a control comes back green: before concluding anything about the
-    test, diff your reverted tree against the commit before the fix. Cheap,
-    and it answers a question no amount of care answers.
+    That third arm also reclassified the argument: it is not part of the fix
+    but a **compile-time guard**, so that deleting the conformance breaks the
+    build instead of silently unpinning every streamed request. Which is
+    exactly the failure mode that kept #32 invisible.
+
+    So: when a control comes back green, diff your reverted tree against the
+    commit before the fix, and if the conclusion matters, vary each part
+    independently. One command, and it answers what no amount of care does.
+14. **A red can point at the wrong half of the system.** The companion to every
+    "green means nothing ran": here the test failed, failed for the right
+    reason, and still sent the reader somewhere useless. `try` threw the
+    underlying `-1202` straight out, so the assertion never ran, and all the
+    failure said was *the certificate for this server is invalid* — which reads
+    as a certificate problem and costs a round of investigating the bridge's
+    cert chain. The one datum that identified it as our own wiring, an empty
+    delegate log, appeared nowhere in the output. Investigating the wrong half
+    is what actually happened, twice, before the message was changed to carry
+    `Delegate recorded []`.
+
+    When you write a failure message, the question is not "does this say
+    something true" but "**does a reader who trusts this end up in the right
+    file**". A true message that indicts the wrong component is worse than a
+    vague one, because it is actionable.
 
 ## Hooks
 
