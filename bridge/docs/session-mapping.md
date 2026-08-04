@@ -68,8 +68,12 @@ process, and not the wall clock.
 loses **both**, and the second one bites first:
 
 - **The token is gone.** Every previously paired phone now gets
-  `401 invalid_token` on its next request and must re-pair. Verified: a token
-  issued before a restart is rejected after it.
+  `401 invalid_token` on its next request and must re-pair. Verified end to
+  end: pair, `GET /v1/models` → 200, kill the process, start it again, *the
+  same token* → `401 {"error":{"code":"invalid_token"}}`. Note what does not
+  change across that restart — the instance id is read from `~/.localis` and
+  is identical before and after. The phone still recognises the Mac; it just
+  can no longer talk to it.
 - **The session mapping is gone.** Even after re-pairing, the next turn on an
   old session id starts a fresh CLI conversation.
 
