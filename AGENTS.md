@@ -614,6 +614,26 @@ The rules that come out of this, in order of how often they save us:
     OpenSSL 3 and broke under LibreSSL, which would have shipped a green PR
     and left the red on the next person's machine, where nobody holds the
     clue of having just changed something.
+21. **Count zero on the right side.** Polling a PR with "done when no checks
+    are pending" reported done on its first tick: a commit pushed seconds
+    earlier had no checks attached yet, so `pending == 0` — the same integer
+    as every check having finished, meaning the opposite thing. This is the
+    purest form of the empty-result trap on this list. A skipped suite at
+    least prints `skipped` and an unmatched grep leaves a command you can
+    re-run; here **both states are one number, with nothing to distinguish
+    them.** The repair is structural rather than attentive: require
+    `total > 0` before reading `pending`.
+
+    Its companion, from the same hour: after a repo-wide fix lands on `main`,
+    **branches that have not rebased keep failing exactly as before.** A red
+    that outlives its fix invites the reading that the fix did not work, and
+    the check to run first is `git log origin/main..HEAD` on the branch, not a
+    re-examination of the fix.
+
+    Also from the same hour, worth knowing before it costs a round: `gh pr
+    view --json headRefOid` can lag behind `git ls-remote` by a minute or so.
+    Pinning a monitor to a SHA read from `gh` can leave it waiting on a head
+    that no longer exists.
 
 ## Hooks
 
