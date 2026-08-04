@@ -34,6 +34,10 @@ struct Bridge {
         // would silently break every device that had already paired.
         let identity = try BridgeIdentity.loadOrCreate(in: home)
 
+        // Separate from the pin on purpose — see `BridgeInstanceID`. Reusing
+        // the pin here would make the contract's clone rule unfireable.
+        let instanceID = try BridgeInstanceID.loadOrCreate(in: home)
+
         let claudePath = resolveClaude()
         let catalog = BackendCatalog(
             backends: [ClaudeBackend.descriptor(executable: claudePath)],
@@ -50,7 +54,7 @@ struct Bridge {
             tokens: TokenStore(),
             coordinator: TurnCoordinator(sessions: SessionStore()),
             bridgeName: Host.current().localizedName ?? "Mac",
-            bridgeID: identity.spkiPin
+            bridgeID: instanceID
         )
 
         let server = BridgeServer(identity: identity, handler: handler)
@@ -69,6 +73,7 @@ struct Bridge {
 
           port            \(bound)
           pin             \(identity.spkiPin)
+          instance        \(instanceID)
           claude          \(claudePath == nil ? "not found — backend unavailable" : "found")
 
           pairing code    \(code)      (valid \(Int(PairingSession.lifetime))s)
