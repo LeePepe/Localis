@@ -53,7 +53,7 @@ struct LocalTLSPinningTests {
     /// about which code ran, the observer is a record of it.
     @Test("a wrong pin is refused by us, not by the system's default policy")
     func wrongPinIsRefusedByUs() async throws {
-        let server = try LocalTLSServer.start()
+        let server = try await LocalTLSServer.start()
         let outcomes = Locked<[PinnedSessionDelegate.ChallengeOutcome]>([])
 
         // A syntactically valid pin that cannot match: same shape as a real
@@ -105,7 +105,7 @@ struct LocalTLSPinningTests {
     /// which is the failure mode #31 hit.
     @Test("the matching pin completes a handshake to a self-signed certificate")
     func matchingPinConnects() async throws {
-        let server = try LocalTLSServer.start()
+        let server = try await LocalTLSServer.start()
         let outcomes = Locked<[PinnedSessionDelegate.ChallengeOutcome]>([])
 
         let http = PinnedHTTP(pin: server.pin, observer: { outcome in
@@ -132,7 +132,7 @@ struct LocalTLSPinningTests {
     /// failing proves nothing about which code decided.
     @Test("no pin refuses the connection rather than trusting on first use")
     func nilPinRefuses() async throws {
-        let server = try LocalTLSServer.start()
+        let server = try await LocalTLSServer.start()
         let outcomes = Locked<[PinnedSessionDelegate.ChallengeOutcome]>([])
 
         let http = PinnedHTTP(pin: nil, observer: { outcome in
@@ -164,8 +164,8 @@ struct LocalTLSPinningTests {
     /// hashes it another, as long as the two agree with each other — a closed
     /// loop that passes while the pin shown to the user matches nothing.
     @Test("the harness certificate's pin matches openssl's SPKI digest")
-    func harnessPinMatchesOpenSSL() throws {
-        let server = try LocalTLSServer.start()
+    func harnessPinMatchesOpenSSL() async throws {
+        let server = try await LocalTLSServer.start()
         #expect(!server.pin.base64.isEmpty)
         // 32 bytes of SHA-256, base64: 44 characters ending in '='.
         #expect(server.pin.base64.count == 44, """

@@ -130,7 +130,7 @@ enum LocalTLSServer {
     ///   a specific body should say exactly what it wants on the wire.
     static func start(
         respondWith response: String = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
-    ) throws -> Running {
+    ) async throws -> Running {
         let (identity, certificate) = try makeIdentity()
 
         guard let pin = SPKIPinning.spkiHash(of: certificate) else {
@@ -165,7 +165,7 @@ enum LocalTLSServer {
             connection.start(queue: .global())
         }
 
-        let port = try awaitReady(listener)
+        let port = try await awaitReady(listener)
         return Running(
             port: port,
             pin: pin,
@@ -173,49 +173,71 @@ enum LocalTLSServer {
         )
     }
 
-    /// Blocks until the listener is ready, or gives up.
+    /// Suspends until the listener is ready, or gives up.
     ///
-    /// Semaphore rather than a continuation because `start(...)` is
-    /// synchronous: a test that has to `await` its fixture setup reads as
-    /// though the setup is part of what is being measured.
+    /// **This must not block the calling thread.** It used to: a
+    /// `DispatchSemaphore.wait()` held the thread the test was running on while
+    /// the listener's `stateUpdateHandler` waited for a thread of its own. With
+    /// four tests each starting a listener, swift-testing running them in
+    /// parallel, and a CI machine with few cores, every thread that could have
+    /// delivered `.ready` was already parked inside one of these waits. The
+    /// handler was never called at all — the failure read
+    /// `no state update was delivered`, and the whole test binary, including
+    /// suites that touch nothing but strings, stalled for the full 10-second
+    /// timeout. Measured on CI: 198 of 248 tests reported durations inside one
+    /// 11-millisecond band at 10.61s.
+    ///
+    /// It does not reproduce on a 14-core laptop, where there is always a spare
+    /// thread, which is why the harness looked correct locally through several
+    /// rounds. A suspension gives the thread back, so readiness can be
+    /// delivered on it.
     ///
     /// The failure carries the last state seen, because the three ways this
     /// gives up are three different problems and they were previously
     /// indistinguishable. `.failed(error)` says the OS refused the bind and
     /// names why; `.waiting(error)` is a listener still asking for something it
     /// has not been given; a plain timeout with no state at all is a listener
-    /// that never called back. Reporting all three as "never reached .ready"
-    /// leaves whoever hits it in CI with nothing to act on — measured, on this
-    /// harness's first CI run.
-    private static func awaitReady(_ listener: NWListener) throws -> UInt16 {
-        let ready = DispatchSemaphore(value: 0)
-        let bound = Locked<UInt16?>(nil)
-        let fired = Locked<Bool>(false)
+    /// that never called back — which is what found the deadlock above.
+    private static func awaitReady(_ listener: NWListener) async throws -> UInt16 {
         let lastState = Locked<String>("no state update was delivered")
+        let resumed = Locked<Bool>(false)
 
-        listener.stateUpdateHandler = { state in
-            lastState.set(Self.describe(state))
-
-            let alreadyFired = fired.mutate { was -> Bool in
+        // Cancellation of the timeout race must not resume the continuation
+        // twice; whichever branch arrives first wins and the other is dropped.
+        @Sendable func finish(
+            _ continuation: CheckedContinuation<UInt16?, Never>,
+            with port: UInt16?
+        ) {
+            let already = resumed.mutate { was -> Bool in
                 defer { was = true }
                 return was
             }
-            guard !alreadyFired else { return }
+            guard !already else { return }
+            continuation.resume(returning: port)
+        }
 
-            switch state {
-            case .ready:
-                bound.set(listener.port?.rawValue)
-                ready.signal()
-            case .failed, .cancelled:
-                ready.signal()
-            default:
-                // Not fired after all — reset so a later .ready still counts.
-                fired.set(false)
+        let port = await withCheckedContinuation { (continuation: CheckedContinuation<UInt16?, Never>) in
+            listener.stateUpdateHandler = { state in
+                lastState.set(Self.describe(state))
+                switch state {
+                case .ready:
+                    finish(continuation, with: listener.port?.rawValue)
+                case .failed, .cancelled:
+                    finish(continuation, with: nil)
+                default:
+                    break
+                }
+            }
+            listener.start(queue: .global())
+
+            // A listener that never calls back would otherwise suspend forever;
+            // the timeout is what turns that into a named failure.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
+                finish(continuation, with: nil)
             }
         }
-        listener.start(queue: .global())
 
-        guard ready.wait(timeout: .now() + 10) == .success, let port = bound.get() else {
+        guard let port else {
             listener.cancel()
             throw SetupFailure.listenerFailed(lastState: lastState.get())
         }
