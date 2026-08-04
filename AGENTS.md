@@ -243,6 +243,15 @@ The rules that come out of this, in order of how often they save us:
     the apology that followed it was itself misattributed. A wrong diagnosis
     can survive being apologised for — the apology closes the file.
 
+    Where the false belief came from is worth its own sentence, because it is
+    not carelessness and it recurs. The claim "the argument is load-bearing"
+    was written into a source comment, confidently, and never revisited:
+    **writing something down produces the feeling of having verified it.** The
+    same effect shows up in the reasoning that led to deleting the test — two
+    alternatives were enumerated, and having a list produced the feeling of
+    having covered the space. Enumerating and writing both impersonate
+    checking. Neither is one.
+
     That third arm also reclassified the argument: it is not part of the fix
     but a **compile-time guard**, so that deleting the conformance breaks the
     build instead of silently unpinning every streamed request. Which is
