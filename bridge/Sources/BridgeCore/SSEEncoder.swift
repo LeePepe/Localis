@@ -37,6 +37,17 @@ public enum SSEEncoder {
             payload["seq"] = seq
         }
 
+        // Alongside `seq`, and for the same reason. The contract states this
+        // twice — response header *and* first event — and the redundancy is
+        // deliberate: a consumer reading only the body (a proxy, a recorded
+        // stream) never sees the header, and without the id it cannot name the
+        // turn it is watching. `turn_end` also carries it in its own body;
+        // both values come from the coordinator that minted the id, so a frame
+        // with two disagreeing ids is not expressible.
+        if let turnID = event.turnID {
+            payload["turn_id"] = turnID
+        }
+
         let json = serialise(payload)
 
         // No `id:` field: SSE's own reconnection mechanism would have the

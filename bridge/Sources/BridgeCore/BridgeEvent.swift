@@ -37,12 +37,23 @@ public enum BridgeEvent: Sendable, Hashable {
 /// address.
 public struct SequencedEvent: Sendable, Hashable {
     public let seq: Int?
+    /// The turn this frame belongs to (contract §3.3).
+    ///
+    /// Carried on the frame rather than left to the response header. The
+    /// contract states it as two separate MUSTs — header *and* first event —
+    /// and the redundancy is the point: a consumer that reads only the SSE body
+    /// (a proxy, a recorded stream, a log replay) never sees the header, and
+    /// without the id it cannot resume or cancel the turn it is watching.
+    public let turnID: String?
     public let event: BridgeEvent
 
     /// - Parameter seq: nil only for `[DONE]`, which is a sentinel rather than
     ///   a numbered event and therefore has nothing to resume from.
-    public init(seq: Int?, event: BridgeEvent) {
+    /// - Parameter turnID: nil for the same reason — `[DONE]` is a literal, not
+    ///   an object, so it has nowhere to put a field.
+    public init(seq: Int?, turnID: String? = nil, event: BridgeEvent) {
         self.seq = seq
+        self.turnID = turnID
         self.event = event
     }
 }

@@ -101,7 +101,9 @@ public actor TurnCoordinator {
         var sawFailure: String?
 
         func emit(_ event: BridgeEvent) {
-            continuation.yield([UInt8](SSEEncoder.encode(SequencedEvent(seq: seq, event: event)).utf8))
+            continuation.yield([UInt8](SSEEncoder.encode(
+                SequencedEvent(seq: seq, turnID: turnID, event: event)
+            ).utf8))
             seq += 1
         }
 
@@ -164,7 +166,11 @@ public actor TurnCoordinator {
         code: String?
     ) {
         let end = TurnEndEvent(turnID: turnID, outcome: outcome, errorCode: code)
-        continuation.yield([UInt8](SSEEncoder.encode(SequencedEvent(seq: seq, event: .turnEnd(end))).utf8))
+        continuation.yield([UInt8](SSEEncoder.encode(
+            SequencedEvent(seq: seq, turnID: turnID, event: .turnEnd(end))
+        ).utf8))
+        // `[DONE]` alone carries neither field: it is a literal sentinel with
+        // nowhere to put one.
         continuation.yield([UInt8](SSEEncoder.encode(SequencedEvent(seq: nil, event: .done)).utf8))
         continuation.finish()
 
