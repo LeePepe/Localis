@@ -100,6 +100,12 @@ step of `--delete-branch` fails — leaving the remote branch alive while the
 command's output reads like an outright failure. Check `git ls-remote` rather
 than the exit status.
 
+Two people merging the same PR produces `GraphQL: Merge already in progress`.
+The merge itself is fine — it happens once — but say so before merging someone
+else's pull request, because the author is usually watching it and the second
+attempt looks like a failure to whoever sees it. Neither party passed
+`--delete-branch` that time, so the remote branch outlived the merge as well.
+
 It has a worse failure than refusing, too: after a rerun, `gh run view --log`
 returns the **latest attempt's** log rather than the one you asked for. The
 first attempt's crash then looks like it vanished, and "the rerun overwrote the

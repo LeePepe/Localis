@@ -673,6 +673,43 @@ The rules that come out of this, in order of how often they save us:
     finding from the old one: an exemption pinned to the original commit does
     not cover the squashed copy. Check what the merge would introduce before
     merging, not after.
+23. **CI runs on `main` and on pull requests targeting it. Nothing else.**
+    Read the `on:` block once rather than assuming: a long-lived branch here
+    accumulated thirty commits, a hundred and sixty tests and a full acceptance
+    script **without a single CI run**, and a pull request between two
+    non-`main` branches reports "no checks reported" — which looks like the
+    checks are queued.
+
+    So "it's green on that branch" means one person's local machine said so,
+    which is the same standing as an unrun test. Worth stating plainly because
+    branch protection, required checks and a healthy-looking Actions tab all
+    describe `main`, and none of them says anything about where the work
+    actually is.
+24. **One sample cannot tell a mapping from a constant.** A test injecting one
+    error and asserting one diagnostic passes equally against an implementation
+    that hardcodes that diagnostic. Two distinct inputs with distinct expected
+    outputs is the smallest thing that distinguishes them — the same reason
+    `probe` returning a `Bool` and `isAvailable` reading always-true went
+    unnoticed for so long.
+
+    Two related shapes from the same review, both about tests that pass without
+    discriminating:
+
+    **Fixing a catch-all can create a narrower catch-all.** Mapping only
+    `URLError` and defaulting everything else preserves exactly the collapse
+    being repaired — and hides better, because its blind spot is precisely the
+    domains nobody thinks to test.
+
+    **Assert that nothing forbidden appears, not that the expected fields are
+    right.** Whitelisting fields passes a future field that happens to carry a
+    path; asserting the rendered output contains no `/Users`, no hostname, no
+    port survives additions nobody has written yet.
+
+    And pick test data that only one side can produce. An assertion that port
+    `8443` never appears in a diagnostic is worthless if the client under test
+    also uses `8443` — the value would then have two possible sources, and the
+    assertion reads whichever arrived. Same failure as three probes sharing one
+    exit code, relocated into the fixtures.
 
 ## Hooks
 
