@@ -188,6 +188,15 @@ while you are holding an unverified change, and **any failure then looks like
 the one you just caused**. We nearly went back and "fixed" two correct
 assertions over it.
 
+A related trap has cost us a whole design round: **a symbol's name is not its
+semantics.** `NSURLErrorServerCertificateUntrusted` sounds like the code for a
+pin that did not match, and `NSURLErrorCancelled` sounds like a user pressing
+stop. Measured, they are close to swapped — `-1202` is what the *system's*
+default policy produces when the delegate is never consulted (the shape of
+#32), while a delegate that is consulted and refuses produces `-999`, the same
+code as the stop button. A whole error-mapping table was reasoned out from the
+names before anyone measured, and both of us had accepted it.
+
 One more, which is the inverse of "an unwritten invariant looks like an absent
 one": **a written-down defect looks like the only defect.** #25 was recorded,
 explained at length, and assigned — and that is plausibly why its second half
@@ -240,6 +249,15 @@ The rules that come out of this, in order of how often they save us:
    missed that the same rule decided their own open change. The information was
    in hand; only its role was wrong. After you use something as evidence, ask
    what it says about what you are holding.
+
+   Its everyday form is cheaper to catch: **before building an apparatus to
+   measure a behaviour, grep the assertions for it.** A live TLS probe was
+   stood up to establish that a refused pin surfaces as `-999` rather than a
+   certificate error. That exact claim was already a `#expect` in the negative
+   control, with a comment saying so, green on every run that day — and it had
+   been read aloud in the conversation a few messages earlier without anyone
+   noticing it settled the open question. A test is documentation that CI
+   re-verifies daily; it is fresher than any comment and it is searchable.
 10. **Before proposing "point that test at the other branch," check whether the
     other branch already has one.** The suggestion sounds like added coverage
     and can deliver a duplicate — coverage rises, nothing new is guarded.
