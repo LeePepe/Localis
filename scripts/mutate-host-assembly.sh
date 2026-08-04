@@ -33,7 +33,19 @@
 
 set -uo pipefail
 
-REPO="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+# The repo root, from this script's own location rather than from git.
+#
+# `git rev-parse --show-toplevel` is the obvious spelling and it is wrong here:
+# git exports GIT_DIR when it runs a hook, and with GIT_DIR set,
+# `git -C scripts rev-parse --show-toplevel` answers about the *cwd* it was
+# handed and returns `<repo>/scripts`. Checked in this tree rather than assumed
+# — the same command prints the repo root bare and `<repo>/scripts` with GIT_DIR
+# exported.
+#
+# `$TARGET` below would then not exist, the initial `cp` fails, and the round
+# dies before its baseline — from a hook, while passing standalone. That is the
+# pair of results least likely to be read as one bug.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 1
 
 TARGET="Localis/Sources/HostAssembly.swift"
