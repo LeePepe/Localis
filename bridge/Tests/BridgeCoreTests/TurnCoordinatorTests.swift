@@ -10,6 +10,16 @@ import Testing
 /// is worth recording: the gap was not a subtle one, it was simply in the one
 /// type nothing exercised. A stream is awkward to assert against, and awkward
 /// is where holes accumulate.
+///
+/// **On `turn_id` specifically: the contract does not require it on these
+/// frames.** Amendment D §5b (2026-08-04) deleted that MUST, and the contract
+/// now says a client MUST work when the first event omits it — the response
+/// header `x-localis-turn-id` is the sole authority. The two tests below that
+/// assert it therefore pin *bridge behaviour we chose*, not compliance. Do not
+/// go looking in the contract for their basis; see `SequencedEvent.turnID` for
+/// why the field is emitted anyway. Deleting these two would break no promise
+/// to any client. `seqIsMonotonic` and `turnIDIsConsistent` are a different
+/// matter — `seq` is still a MUST, and self-consistency is not optional.
 @Suite("TurnCoordinator")
 struct TurnCoordinatorTests {
     /// A runner that emits exactly what it was handed.

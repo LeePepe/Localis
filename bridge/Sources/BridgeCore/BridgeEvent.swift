@@ -37,13 +37,26 @@ public enum BridgeEvent: Sendable, Hashable {
 /// address.
 public struct SequencedEvent: Sendable, Hashable {
     public let seq: Int?
-    /// The turn this frame belongs to (contract §3.3).
+    /// The turn this frame belongs to. **Not required by the contract.**
     ///
-    /// Carried on the frame rather than left to the response header. The
-    /// contract states it as two separate MUSTs — header *and* first event —
-    /// and the redundancy is the point: a consumer that reads only the SSE body
-    /// (a proxy, a recorded stream, a log replay) never sees the header, and
-    /// without the id it cannot resume or cancel the turn it is watching.
+    /// The contract once stated this as a second MUST alongside the response
+    /// header, and this field was written to satisfy it. [Amendment D §5b]
+    /// (2026-08-04) deleted that MUST: the authoritative source of turn
+    /// identity is the `x-localis-turn-id` response header, and the clause's
+    /// own stated reason — "so the client can record it before any body
+    /// arrives" — is something only a header can deliver, since the first
+    /// event *is* body and arrives later.
+    ///
+    /// So the field stays as a deliberate extra, not as compliance. Emitting
+    /// it costs nothing (unknown fields are ignored by any OpenAI-compatible
+    /// client, and iOS reads the header), and it is the only way a consumer of
+    /// the body alone — a proxy, a recorded stream, a log replay — can tell
+    /// which turn it is watching. Those consumers are not in scope today; if
+    /// they never arrive, this is harmless, and if they do, it is already here.
+    ///
+    /// **Do not read the tests that assert this as evidence of a contract
+    /// requirement.** They pin bridge behaviour, and the contract deliberately
+    /// says the opposite: a client MUST work when the first event omits it.
     public let turnID: String?
     public let event: BridgeEvent
 

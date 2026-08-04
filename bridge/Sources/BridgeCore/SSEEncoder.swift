@@ -37,13 +37,16 @@ public enum SSEEncoder {
             payload["seq"] = seq
         }
 
-        // Alongside `seq`, and for the same reason. The contract states this
-        // twice — response header *and* first event — and the redundancy is
-        // deliberate: a consumer reading only the body (a proxy, a recorded
-        // stream) never sees the header, and without the id it cannot name the
-        // turn it is watching. `turn_end` also carries it in its own body;
-        // both values come from the coordinator that minted the id, so a frame
-        // with two disagreeing ids is not expressible.
+        // A bridge extra, not a contract requirement — unlike `seq` above.
+        // Amendment D §5b (2026-08-04) deleted the MUST that once asked for
+        // this, leaving the `x-localis-turn-id` response header as the sole
+        // authority on turn identity; a client MUST work without it here.
+        //
+        // Kept anyway because it is free and it is the only handle a body-only
+        // consumer (proxy, recorded stream, log replay) has on which turn it is
+        // reading. `turn_end` carries it in its own payload too; both values
+        // come from the coordinator that minted the id, so a frame with two
+        // disagreeing ids is not expressible.
         if let turnID = event.turnID {
             payload["turn_id"] = turnID
         }
