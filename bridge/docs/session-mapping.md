@@ -64,23 +64,33 @@ process, and not the wall clock.
 
 ## The restart boundary — the part to know before relying on any of this
 
-`SessionStore` is in memory. So is `TokenStore`. A bridge restart therefore
-loses **both**, and the second one bites first:
+`SessionStore` is in memory. `TokenStore` is no longer: grants are written to
+`~/.localis/grants.json` (2026-08-04), because pairing is a one-time act
+(spec.md:46) that ends only when the user unpairs (FR-027) or the certificate
+changes (constitution §V), and a process exiting is none of those.
 
-- **The token is gone.** Every previously paired phone now gets
-  `401 invalid_token` on its next request and must re-pair. Verified end to
-  end: pair, `GET /v1/models` → 200, kill the process, start it again, *the
-  same token* → `401 {"error":{"code":"invalid_token"}}`. Note what does not
-  change across that restart — the instance id is read from `~/.localis` and
-  is identical before and after. The phone still recognises the Mac; it just
-  can no longer talk to it.
-- **The session mapping is gone.** Even after re-pairing, the next turn on an
-  old session id starts a fresh CLI conversation.
+So a restart today loses one of the two:
 
-The mapping loss is recoverable and honest — a forgotten conversation is
-visibly a forgotten conversation, where a *wrong* id would make the CLI reject
-the turn outright. The token loss is the sharper edge, and it is tracked
-separately; it is not a property of session mapping and is not fixed here.
+- **The token survives.** Pair, restart, same token → 200. A corrupt grant file
+  is a startup error naming the remedy, never a silent reset — replacing it
+  would unpair every device on the Mac with no event the user could point at.
+- **The session mapping is still gone.** The next turn on an old session id
+  starts a fresh CLI conversation. Recoverable and honest — a forgotten
+  conversation is visibly forgotten, where a *wrong* id would make the CLI
+  reject the turn outright.
+
+Note what does not change across a restart either way: the instance id is read
+from `~/.localis` and is identical before and after, so the phone recognises
+the Mac. Before grants were persisted, that combination was the bad one — the
+phone knew the Mac and was refused by it on every request.
+
+Making the session mapping durable is not simply the same fix again. The
+backend session id belongs to `claude`, lives under `~/.claude/`, and expires
+on a schedule this bridge does not control — so a persisted mapping can outlive
+the conversation it names. An empty `--resume` is known to make the CLI reject
+the invocation outright; what it does with an *unknown* id is not yet tested,
+and that answer decides whether durability alone is enough or it needs a
+fall-back-and-retry.
 
 `401 invalid_token` is deliberate: the client switches on that code and clears
 its stored token, which is the remedy. An off-vocabulary code (this handler
@@ -88,16 +98,21 @@ said `unauthorized` until 2026-08-04) is mapped by the client to "malformed
 response" — the phone would report a broken bridge instead of "re-pair with
 this Mac".
 
-## What the contract does not say
+## What the contract does not say — and what has been decided since
 
-Two questions a second implementer would have to guess at. Both are reported
-to the spec owner rather than answered here — a bridge that invents an answer
-is a bridge the client cannot predict.
+Two questions a second implementer would have to guess at. Neither is answered
+by the contract text as of `origin/main` = `d35b7f6`; both have been **ruled on
+by the spec owner** (2026-08-04) and are queued to be written into it. Recorded
+here so this file does not read as an open invitation to decide them again —
+but the contract, once amended, is the authority, not this paragraph.
 
-1. **Does a session id survive a bridge restart?** The contract describes the
-   header as mapping an iOS session to an agent session, but says nothing about
-   whether that mapping is expected to be durable. This bridge's answer is "no",
-   which is *an* answer, not *the* answer.
-2. **What should happen when a session id is reused against a backend that
-   never saw it?** Today it silently starts fresh. Rejecting it would also be
-   defensible, and the client currently cannot tell the two apart.
+1. **Does a session id survive a bridge restart?** Ruled: it should, and it
+   will once the mapping is persisted — but *not silently either way*. Today it
+   does not, and the user sees the AI "forget" with no indication why. If the
+   mapping ends up persisted while grants are not (or vice versa), the client
+   must be able to tell the two situations apart.
+2. **A session id reused against a backend that never saw it?** Ruled: keep
+   today's behaviour — start fresh, do not reject. Rejecting would break
+   switching backends mid-conversation, which Amendment B explicitly allows
+   ("a switch applies from the next message"). The contract is to state that a
+   new backend starts from empty context, so the client knows whether to say so.
