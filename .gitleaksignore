@@ -29,4 +29,18 @@
 # value is assembled through a variable so no *new* finding can appear. That
 # branch is not merged; this entry covers the history that exists today, and
 # is what unblocks the five pull requests currently failing on it.
+#
+# When to stop doing this. A second reading of the situation — that CI wants
+# "no new credentials get committed" while `detect` enforces "no credential
+# was ever committed" — argues for switching the job to `gitleaks protect
+# --staged`. Rejected for now, because `detect` catches the case that matters
+# most: a credential already in history is one that has leaked and needs
+# rotating, not merely deleting, and `protect --staged` would never mention it
+# again. One exemption does not justify weakening the check.
+#
+# That trade flips if this file grows. **At three entries, change the job
+# rather than adding a fourth** — by then the mismatch between what the check
+# enforces and how the repository is used is the real finding, and each new
+# line is a place where somebody eventually pastes a fingerprint without
+# checking what it covers.
 95c2953af8bc91f83a4d474215298cc61be07e0c:bridge/scripts/acceptance-unpair.sh:curl-auth-header:112
