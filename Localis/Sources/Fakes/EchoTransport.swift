@@ -103,7 +103,7 @@ struct EchoTransport: AgentTransport {
     }
 
     /// Always reachable — there is nothing to be unreachable.
-    func probe(_ backend: AgentBackend) async -> Bool { true }
+    func probe(_ backend: AgentBackend) async -> HostReachability { .reachable }
 
     /// The canned reply, split into streamable pieces.
     ///

@@ -226,7 +226,13 @@ public actor ChatService {
         // the far end — the accept-then-fail shape FR-053 rules out. Checked
         // before the probe, so no request goes out for an answer already known.
         guard backend.isAvailable else { return session }
-        guard await transport.probe(backend) else { return session }
+        // Only `.reachable` reconnects. `.unknown` is not a green light: it
+        // means no probe has established anything, and treating it as reachable
+        // would be the accept-then-fail shape again, one layer up. The reason a
+        // failure carries (#40) is for the host list to display; here the
+        // question is binary, and collapsing it at the point of use keeps this
+        // guard behaving exactly as it did when `probe` returned `Bool`.
+        guard await transport.probe(backend) == .reachable else { return session }
 
         let reconnected = session.withStatus(.idle)
 

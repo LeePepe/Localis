@@ -45,7 +45,7 @@ private struct ScriptedTransport: AgentTransport {
         )
     }
 
-    func probe(_ backend: AgentBackend) async -> Bool { true }
+    func probe(_ backend: AgentBackend) async -> HostReachability { .reachable }
 }
 
 /// Records the request it was handed, so tests can assert on what this layer
@@ -65,7 +65,7 @@ private actor RecordingTransport: AgentTransport {
         )
     }
 
-    func probe(_ backend: AgentBackend) async -> Bool { true }
+    func probe(_ backend: AgentBackend) async -> HostReachability { .reachable }
 }
 
 /// Builds the `.turnEnd` frame a bridge sends when a turn dies (contract §3.1d).

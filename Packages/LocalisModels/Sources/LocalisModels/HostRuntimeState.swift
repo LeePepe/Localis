@@ -48,6 +48,45 @@ public enum HostReachability: Hashable, Sendable {
     case unknown
 }
 
+extension HostReachability {
+    /// The reachability a failed request establishes about its host (#40).
+    ///
+    /// Lives here rather than in `TransportKit` because both types do, and a
+    /// transport-side mapping would be a second vocabulary that could disagree
+    /// with `userMessage` about what a given failure means.
+    ///
+    /// **Not every `LocalisError` is a statement about the host.** Only the four
+    /// below say something the user can act on; the rest are collapsed to
+    /// `.offline` rather than being given cases of their own, because
+    /// `.offline`'s advice — check the Mac is awake and on the network — is the
+    /// only one that is harmless when the real cause was something else. The
+    /// alternative, defaulting to the nearest specific case, tells a user to
+    /// re-pair a machine whose certificate is fine.
+    ///
+    /// **Both 401 codes land on `.unauthorized`, which is a ruling and not an
+    /// oversight** (`HostRevocation`, 2026-08-04). `LocalisError` keeps
+    /// `tokenRevoked` and `unauthorized` apart because they call for opposite
+    /// credential actions — one clears the Keychain, one does not. This enum
+    /// answers a different question, *why is this host unusable right now*, and
+    /// there both answers are "the credential no longer works, pair again". The
+    /// action difference travels through `HostPairingState.revoked` instead of
+    /// through a fifth reason, which would have to say what `.unauthorized`
+    /// already says and would turn
+    /// `HostUnreachableReasonWordingTests.reasonsAreNotInterchangeable` red.
+    public init(failure: LocalisError) {
+        switch failure {
+        case .certificatePinMismatch:
+            self = .unreachable(reason: .certificateRejected)
+        case .unauthorized, .tokenRevoked:
+            self = .unreachable(reason: .unauthorized)
+        case .protocolUpgradeRequired:
+            self = .unreachable(reason: .unsupportedProtocol)
+        default:
+            self = .unreachable(reason: .offline)
+        }
+    }
+}
+
 /// Why a host cannot be reached. Carried so the UI can say something specific
 /// and actionable rather than a generic failure.
 public enum HostUnreachableReason: String, CaseIterable, Sendable {

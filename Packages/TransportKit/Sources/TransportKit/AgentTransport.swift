@@ -52,5 +52,17 @@ public protocol AgentTransport: Sendable {
     func send(_ request: TurnRequest) async throws -> TurnStream
 
     /// Cheap liveness probe used by the backend-list UI.
-    func probe(_ backend: AgentBackend) async -> Bool
+    ///
+    /// Answers *why* a host is unusable, not only *whether* (#40). A `Bool` has
+    /// one bit for four situations that call for four different user actions,
+    /// and a screen given only that bit can say nothing more useful than
+    /// "unavailable" — including when the honest answer is "this Mac's identity
+    /// has changed", which no amount of waiting will clear.
+    ///
+    /// **Non-throwing on purpose, and it must stay that way.** This runs while
+    /// the host list is being drawn. A throwing probe turns one unreachable Mac
+    /// into an error the user has to dismiss before seeing any of their hosts,
+    /// including the reachable ones. `.unreachable(reason:)` is the failure
+    /// channel; there is no second one.
+    func probe(_ backend: AgentBackend) async -> HostReachability
 }
