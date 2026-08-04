@@ -64,6 +64,25 @@ public enum HostUnreachableReason: String, CaseIterable, Sendable {
 extension HostUnreachableReason {
     /// Why this machine is not answering, in words the user can act on.
     ///
+    /// **Nothing in production reaches this yet, and the tests do not say so.**
+    /// Measured 2026-08-04 over `Packages/*/Sources` and `Localis/Sources`:
+    /// `.unreachable(` has zero occurrences, and the only two `HostRuntimeState(`
+    /// calls are this file's own initialisers. (`HostPairingState` matches four
+    /// files over the same paths, so the search did reach production code.) The
+    /// chain that would end here is
+    ///
+    ///     socket error → `BridgeClient.perform`'s catch-all, which collapses
+    ///     every URLError into `.unreachable` (task #34) → `probe`'s `Bool`
+    ///     return type, which has no room for a reason (task #40) → this.
+    ///
+    /// Two layers above are missing, so every case below is exercised only by
+    /// values the tests construct directly. That matters because an
+    /// injection-tested branch and a branch the live path drives look identical
+    /// in a green test report — #34 landing will make `certificateRejected`
+    /// *reportable* without making it *produced*, which reads like the wiring is
+    /// done. Delete this note when a production caller constructs
+    /// `.unreachable(reason:)`, not before.
+    ///
     /// **The reason this exists at all is that the four cases are four different
     /// user actions**, and a screen that renders them as one "unavailable" has
     /// discarded the only part worth carrying. Waiting fixes `offline` and fixes

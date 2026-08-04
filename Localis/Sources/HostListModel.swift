@@ -79,9 +79,22 @@ final class HostListModel {
 /// One machine, projected for display.
 ///
 /// A value type carrying strings and booleans, so the view has nothing to decide
-/// and nothing to reach back through. It lives in the app target rather than in
-/// `LocalisUI` because `LocalisUI` cannot depend on `LocalisModels` for this —
-/// the same reason `SessionRowState` is handed values rather than a `Session`.
+/// and nothing to reach back through.
+///
+/// **Why it lives in the app target is an open question, not a settled one.**
+/// The comment that used to stand here gave a reason — that `LocalisUI` cannot
+/// depend on `LocalisModels`, the same way `SessionRowState` is handed values
+/// rather than a `Session` — and every part of it is false. Checked 2026-08-04:
+/// `LocalisUI/Package.swift` lists `LocalisModels` as a dependency and six files
+/// under `Packages/LocalisUI/Sources` import it, `SessionRowState` among them;
+/// and `SessionRowState.make(from:backends:)` takes a `Session` directly, which
+/// is the opposite of what was claimed about it.
+///
+/// Left in place rather than moved. Moving it is a cross-package change, and
+/// making it on the strength of a reason nobody has verified would replace one
+/// unchecked justification with another. This note exists so the next reader
+/// finds "undecided" rather than an unexplained placement — the reasonable
+/// response to which is to supply a reason, which is how the false one got here.
 struct HostRowState: Identifiable, Equatable, Sendable {
     let id: HostID
     let title: String
