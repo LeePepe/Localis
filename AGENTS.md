@@ -143,12 +143,34 @@ Instances we actually hit, so you can recognise the family:
 | A `MERGED` pull request | Status field said merged; nobody had checked the content landed |
 | Two teammates' reads of the tree | Both true, for different refs, minutes apart |
 | `** TEST FAILED **` *and* exit 0, no test names | A stale `.xcodeproj` left a file out of the target; compilation failed and nothing ran |
+| 538 green tests over a pinned transport | Every one used a fake HTTP client; real TLS had never run, and the pinning delegate was never called on the streaming path |
+| A timely `429 pairing_session_expired` | It was the *consequence* of the previous probe consuming the one-shot code, not the cause of the failure being investigated |
 
-That last row is the mirror of every other one: they warn that a green may be
-nothing having run — it warns that **a red may be something else having failed**.
-It is the more dangerous direction, because a red arrives while you are holding
-an unverified change, and **any failure then looks like the one you just caused**.
-We nearly went back and "fixed" two correct assertions over it.
+Those last two are worth separating, because they fail in opposite directions.
+
+The first is the most expensive shape this project has produced: **both sides
+green, the seam between them never executed.** Every unit test on the transport
+used a fake HTTP client, so the certificate-pinning delegate had never seen a
+real handshake — and `stream()` turned out never to invoke it at all, which
+means everything except pairing could not have worked. No test could have gone
+red, because no test was on that path. This is ADR-0001's sentence made
+concrete: *a contract is a document, and documents do not turn red by
+themselves.* When two components are written against a shared contract, the
+count of passing tests on either side says nothing about whether they have ever
+spoken.
+
+The second is subtler and cost a full round: an error that **arrives at the
+right moment, names something real, and is still not the cause.** The `429` was
+produced by an earlier probe of my own; investigating it led away from the
+defect. Before accepting an error as an explanation, ask what you did just
+before it — especially where a one-shot resource is involved.
+
+That last row of the original table is the mirror of every other one: they warn
+that a green may be nothing having run — it warns that **a red may be something
+else having failed**. It is the more dangerous direction, because a red arrives
+while you are holding an unverified change, and **any failure then looks like
+the one you just caused**. We nearly went back and "fixed" two correct
+assertions over it.
 
 One more, which is the inverse of "an unwritten invariant looks like an absent
 one": **a written-down defect looks like the only defect.** #25 was recorded,
@@ -198,6 +220,14 @@ The rules that come out of this, in order of how often they save us:
     premises failed**, not just that you were wrong. Every reversal in this
     project came with the specific missing check, and that is what made the
     next person able to skip it.
+12. **A check that did not fire is not a check that held.** Three people hit
+    this on the same day, from different directions: a SHA that never drifted
+    because nobody rebased that branch, a gated suite whose green aggregate
+    would look the same whether it skipped or ran, and a negative control whose
+    error code was taken as proof the delegate had refused when nothing recorded
+    that it ran at all. In each case the mechanism was untested, not proven.
+    Ask what would have had to happen for this check to speak, and whether it
+    did — then record the answer rather than inferring it.
 
 ## Hooks
 
