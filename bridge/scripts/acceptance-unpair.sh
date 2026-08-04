@@ -20,6 +20,14 @@ FAILURES=0
 cleanup() {
     [ -n "${BRIDGE_PID:-}" ] && kill "$BRIDGE_PID" 2>/dev/null
     wait "$BRIDGE_PID" 2>/dev/null
+    # Deleting the home directory belongs here, not at the end of the happy
+    # path. grants.json holds the pairing token in plaintext (TokenStore's
+    # Entry.token is a String), and this script has two early exits — the
+    # bridge failing to start, and pairing failing — each of which used to
+    # leave that file behind in /tmp. A credential surviving the process that
+    # created it is the failure Constitution I exists to prevent, and it was
+    # reachable on exactly the paths where something had already gone wrong.
+    [ -n "${HOME_DIR:-}" ] && rm -rf "$HOME_DIR"
 }
 trap cleanup EXIT
 
@@ -136,5 +144,8 @@ if [ "$FAILURES" -eq 0 ]; then
 else
     echo "$FAILURES CHECK(S) FAILED"
 fi
-rm -rf "$HOME_DIR"
+# No rm here — cleanup() runs on EXIT and covers this path along with the two
+# early exits. Deleting in both places would work, but it would suggest the
+# happy path is where cleanup happens, which is the assumption that let the
+# plaintext token survive the failing paths in the first place.
 exit "$FAILURES"
