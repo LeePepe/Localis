@@ -1,0 +1,246 @@
+/* ==========================================================================
+   activity.css — what the machine is doing, and what happened while you were
+   away (screens 09, 10, 02e).
+
+   Split from styles.css to keep that file under the size ceiling, and because
+   these components share one job: reporting on a computer you are not sitting
+   at. Flat, in-flow surfaces — none of this is floating chrome, so none of it
+   is glass.
+   ========================================================================== */
+
+/* ── While-you-were-away band (screen 09) ───────────────────────────────── */
+
+/* Backgrounded streaming is a product promise, so returning has to show the
+   promise kept. In-flow surface, so flat — this is not floating chrome. */
+.away-band {
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+.away-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 8px;
+}
+.away-title { font-size: 13px; font-weight: 650; }
+.away-meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.away-x { color: var(--text-3); font-size: 15px; cursor: pointer; }
+
+.away-row {
+  display: flex;
+  gap: 11px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+/* The row reuses .rmain/.rtop from a session row but sits outside `.row`, so
+   it needs those layout rules restated rather than inherited. */
+.away-row .rmain { flex: 1 1 auto; min-width: 0; }
+.away-row .rtop { display: flex; align-items: baseline; gap: 8px; }
+.away-row .rtitle { font-size: 15px; font-weight: 600; flex: 1 1 auto; min-width: 0; }
+.away-row .rtime {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.away-row .rsub {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin-top: 3px;
+}
+.away-row .rmeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  flex-wrap: wrap;
+  row-gap: 5px;
+}
+/* A failure that happened on a machine you could not see outranks the
+   successes — it is still broken, and it is why this band exists. */
+.away-row.bad { background: color-mix(in srgb, var(--danger) 7%, transparent); }
+
+.mini-btn {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  border: 1px solid var(--primary-border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.mini-btn.danger { color: var(--danger); border-color: var(--danger); }
+.mini-btn.wide {
+  display: block;
+  text-align: center;
+  padding: 7px 12px;
+  margin-top: 10px;
+}
+
+/* ── Activity (screen 10) ───────────────────────────────────────────────── */
+
+/* "What is it doing right now" is the headline, not a log line: you are
+   remote from a machine running commands on your behalf. */
+.now-card {
+  margin: 10px 14px 4px;
+  padding: 12px 13px;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+.now-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.now-cmd {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-1);
+  margin: 7px 0 9px;
+  word-break: break-all;
+  line-height: 1.4;
+}
+.now-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.tool {
+  display: flex;
+  gap: 10px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--border);
+  align-items: flex-start;
+}
+.tool:first-child { border-top: 0; }
+.tool .tdot {
+  width: 7px; height: 7px;
+  border-radius: 999px;
+  background: var(--text-3);
+  margin-top: 5px;
+  flex: 0 0 auto;
+}
+.tool.live .tdot { background: var(--primary); }
+.tool.bad .tdot { background: var(--danger); }
+.tool .tname {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-1);
+  word-break: break-all;
+}
+.tool .tmeta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.tool.bad .tmeta { color: var(--danger); }
+
+/* There is deliberately no ".field.pending" style.
+   Telemetry renders by FIELD PRESENCE: a backend that does not report a value
+   makes its row disappear entirely. A permanently-empty slot labelled "not
+   available" implies the number is coming, which is its own kind of lie. */
+
+/* ── Catalog-not-loaded empty state (screen 02e) ────────────────────────── */
+
+.fz-empty { padding: 16px 15px 15px; text-align: center; }
+.fz-empty-t { font-size: 14px; font-weight: 650; color: var(--text-1); }
+.fz-empty-s {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+  margin-top: 5px;
+}
+
+/* ── Detached vs interrupted (screen 11) ────────────────────────────────── */
+
+/* Two states that look alike and mean opposite things. The visual difference
+   below is the SECOND line of defence; the first is that `detached` never
+   renders a retry control at all — see screens-activity.js. Making a harmful
+   action look different is weaker than making it not exist. */
+.state-strip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 7px;
+  padding: 8px 10px;
+  border-radius: var(--radius-inner);
+  background: var(--inner);
+  border: 1px solid var(--border);
+}
+.state-strip .st-main { flex: 1 1 auto; min-width: 0; }
+.state-strip .st-t { font-size: 12px; font-weight: 650; color: var(--text-1); }
+.state-strip .st-s {
+  font-size: 11px;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin-top: 2px;
+}
+
+/* Detached: the work is alive somewhere, so the marker is alive too. */
+.state-strip.detached {
+  background: color-mix(in srgb, var(--primary) 9%, transparent);
+  border-color: var(--primary-border);
+}
+.state-strip.detached .pulse {
+  width: 8px; height: 8px;
+  border-radius: 999px;
+  background: var(--primary);
+  flex: 0 0 auto;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* Interrupted: nothing is running, so the marker is a severed line — static,
+   not a dot that could be mistaken for activity. */
+.state-strip.interrupted { border-style: dashed; }
+.state-strip.interrupted .brk {
+  width: 10px; height: 0;
+  border-top: 2px dashed var(--text-3);
+  flex: 0 0 auto;
+}
+
+/* Truncated output is kept and marked, never discarded — it is the only
+   record of a long run. */
+.trunc {
+  display: inline-block;
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  border-bottom: 1px dashed var(--text-3);
+}
+
+.cmp-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 9px 13px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.cmp-row:first-child { border-top: 0; }
+.cmp-row .cmp-k {
+  font-weight: 650;
+  color: var(--text-1);
+  flex: 0 0 84px;
+}
+.cmp-row .cmp-v { color: var(--text-2); min-width: 0; }
+.cmp-row.bad .cmp-k, .cmp-row.bad .cmp-v b { color: var(--danger); }

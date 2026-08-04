@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Localis — Prototype (原型图)</title>
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="viewer.css">
+<link rel="stylesheet" href="glass.css">
+<link rel="stylesheet" href="pad.css">
+<link rel="stylesheet" href="activity.css">
 </head>
 <body>
 
@@ -74,6 +78,8 @@
 <div class="stage">
   <div class="legend">
     <span><b>Wireframe-level.</b> Structure, hierarchy, IA and state — not final visual design.</span>
+    <span><b>iOS 26 · Liquid Glass.</b> Floating translucent chrome, inset 21pt; content fades under it.</span>
+    <span><b>Reachable controls at the bottom</b> — search is a tab, create is an island.</span>
     <span><span class="swatch" style="background:#34C759"></span><b>connected</b></span>
     <span><span class="swatch" style="background:#007AFF"></span><b>streaming</b></span>
     <span><span class="swatch" style="background:#80838D"></span><b>idle</b></span>
@@ -85,7 +91,10 @@
 </div>
 
 <script src="tokens.js"></script>
+<script src="model.js"></script>
 <script src="screens.js"></script>
+<script src="screens-ipad.js"></script>
+<script src="screens-activity.js"></script>
 <script>
 (function () {
   'use strict';
@@ -128,8 +137,10 @@
   // ── Frame rendering ─────────────────────────────────────────────────────
 
   function frameHTML(screen) {
-    return '<div class="frame-holder"><div class="frame-wrap">' +
-      '<div class="frame' + (state.hotspots ? ' hotspots' : '') + '" data-screen="' + screen.id + '">' +
+    var pad = screen.pad ? ' pad' : '';
+    return '<div class="frame-holder' + pad + '"><div class="frame-wrap' + pad + '">' +
+      '<div class="frame' + pad + (state.hotspots ? ' hotspots' : '') +
+        '" data-screen="' + screen.id + '">' +
         '<div class="notch"></div>' +
         screen.render() +
         '<div class="home-ind"></div>' +
@@ -146,21 +157,34 @@
    * A note whose subject sits below the fold gets no pin (it would render
    * outside the phone); the notes panel marks it instead, so the note is
    * never silently unanchored.
+   *
+   * Some screens render another screen underneath themselves (the pickers
+   * draw the chat behind their scrim). Those inherited `data-note` anchors
+   * belong to the OTHER screen's notes, so they are skipped — otherwise a
+   * picker would show pins numbered past the end of its own note list.
    */
   function placePins() {
     Array.prototype.forEach.call(document.querySelectorAll('.frame-wrap'), function (wrap) {
       var layer = wrap.querySelector('.pins');
       var frame = wrap.querySelector('.frame');
       if (!layer || !frame) return;
+      var screen = byId[frame.getAttribute('data-screen')];
+      var own = {};
+      ((screen && screen.notes) || []).forEach(function (n) { own[n[0]] = true; });
       var wrapRect = wrap.getBoundingClientRect();
       var frameRect = frame.getBoundingClientRect();
-      var scale = wrapRect.width / 390 || 1;
+      // Scale from the frame's own unscaled width, so an iPad frame (which is
+      // both wider and scaled differently) places its pins correctly too.
+      var scale = frameRect.width / (frame.offsetWidth || 390) || 1;
       var html = '';
       var offscreen = [];
+      var seen = {};
       Array.prototype.forEach.call(frame.querySelectorAll('[data-note]'), function (el) {
-        var r = el.getBoundingClientRect();
         var n = el.getAttribute('data-note');
+        if (!own[n] || seen[n]) return;
+        var r = el.getBoundingClientRect();
         if (!r.width && !r.height) return;
+        seen[n] = true;
         if (r.top >= frameRect.bottom - 6 || r.bottom <= frameRect.top + 6) {
           offscreen.push(n);
           return;
@@ -203,7 +227,8 @@
   function render() {
     if (state.view === 'board') {
       root.innerHTML = '<div class="board">' + window.Screens.map(function (s) {
-        return '<div class="frame-slot">' + captionHTML(s, true) + frameHTML(s) + '</div>';
+        return '<div class="frame-slot' + (s.pad ? ' pad' : '') + '">' +
+          captionHTML(s, true) + frameHTML(s) + '</div>';
       }).join('') + '</div>';
     } else {
       var s = byId[state.screen];

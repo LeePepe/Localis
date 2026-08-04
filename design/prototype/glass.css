@@ -1,0 +1,528 @@
+/* ==========================================================================
+   glass.css — the iOS 26 (Liquid Glass) layer.
+
+   Kept separate from styles.css on purpose: this file is the entire delta
+   between the old design language and the new one, so `Packages/DesignKit`
+   can be read against it directly.
+
+   THE RULE IT CHANGES
+   -------------------
+   Old: elevation = luminance tier + 1px border, no shadows, chrome is opaque
+        and edge-to-edge, bars butt against the content.
+   New: chrome FLOATS above the content — translucent material, inset from the
+        edges, capsule-shaped, with the system's only shadows. Content fades
+        under it rather than being clipped by a hard bar edge.
+
+   WHAT DOES NOT CHANGE
+   --------------------
+   ONE seed color, fixed semantics, status-as-pill, tabular numerals, three
+   type levels, backend-identity-as-hue. Non-floating surfaces (cards, list
+   rows, sheets) keep the flat luminance-tier treatment — a card is not glass.
+
+   LEGIBILITY
+   ----------
+   `--glass` is for chrome holding short high-contrast content (tab labels, an
+   icon). `--glass-solid` is for chrome holding running text (search field,
+   composer). Liquid Glass's real-world failure mode is body copy over a busy
+   backdrop, so anything you must read gets the opaque treatment.
+   ========================================================================== */
+
+/* ── Floating chrome: the shared material ───────────────────────────────── */
+
+.glass {
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow);
+  position: relative;
+}
+
+/* Specular top edge — the light-refracting bit. One hairline, not a gradient
+   wash, so it survives being scaled down on the board view. */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border-top: 1px solid var(--glass-highlight);
+  pointer-events: none;
+}
+
+.glass.opaque { background: var(--glass-solid); }
+
+/* ── The bottom furniture ───────────────────────────────────────────────── */
+
+/* Everything that floats at the bottom lives in one layer, so the tab bar,
+   the compose island and the composer can never overlap by accident. */
+.dock {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: 0;
+  z-index: 26;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  /* 21pt inset from left/right/bottom, per the iOS 26 tab bar metric.
+     Bottom clears the home indicator. */
+  padding: 0 21px 30px;
+  pointer-events: none;
+}
+.dock > * { pointer-events: auto; }
+
+/* ── Floating tab bar ───────────────────────────────────────────────────── */
+
+.tabbar-float {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 56px;
+  padding: 0 6px;
+  border-radius: 999px;
+}
+
+.tabbar-float .tab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 2px;
+  height: 46px;
+  border-radius: 999px;
+  /* 11pt SF, per the iOS 26 tab label metric. */
+  font-size: 11px;
+  line-height: 1.1;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.tabbar-float .tab .ic {
+  width: 22px; height: 22px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  display: grid; place-items: center;
+  font-size: 11px;
+}
+/* Selected destination in the accent color, over a tinted capsule so the
+   selection survives a busy backdrop showing through the material. */
+.tabbar-float .tab.on {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.tabbar-float .tab.on .ic {
+  border-style: solid;
+  border-color: var(--primary-border);
+}
+
+/* Search is a tab — `Tab(role: .search)`. It gets no label so it reads as a
+   distinct affordance rather than a fourth destination, and a hairline
+   separates it from the true destinations. */
+.tabbar-float .tab.search {
+  flex: 0 0 auto;
+  width: 44px;
+  margin-left: 4px;
+  position: relative;
+}
+.tabbar-float .tab.search::before {
+  content: "";
+  position: absolute;
+  left: -4px; top: 12px; bottom: 12px;
+  width: 1px;
+  background: var(--border);
+  opacity: 0.7;
+}
+
+/* Minimized-on-scroll: the bar shrinks to icons and loses its labels.
+   Drawn as a state so the behaviour is reviewable, not just described. */
+.tabbar-float.mini { height: 46px; }
+.tabbar-float.mini .tab { height: 38px; gap: 0; }
+.tabbar-float.mini .tab span:not(.ic) { display: none; }
+
+/* ── The compose island ─────────────────────────────────────────────────── */
+
+/* The tab bar deliberately does NOT span the full width. The freed
+   bottom-right corner takes the primary create action as its own glass
+   island — the most reachable point on the screen for a right thumb. */
+.island {
+  flex: 0 0 auto;
+  width: 56px; height: 56px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  font-weight: 400;
+  cursor: pointer;
+}
+.island.accent {
+  background: var(--primary);
+  border-color: transparent;
+  color: var(--on-primary);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.island.accent::before { border-top-color: rgb(255 255 255 / 0.28); }
+
+/* ── Progressive edge fade ──────────────────────────────────────────────── */
+
+/* Content fades as it approaches an edge instead of being cut by a bar.
+   Bottom = fade only. Top = blur + fade, which is why the two rules differ. */
+.edge-fade {
+  position: absolute;
+  left: 0; right: 0;
+  pointer-events: none;
+  z-index: 24;
+}
+.edge-fade.bottom {
+  bottom: 0;
+  height: 132px;
+  background: linear-gradient(
+    to bottom,
+    var(--fade-0) 0%,
+    var(--fade-1) 46%,
+    var(--fade-2) 78%,
+    var(--fade-2) 100%
+  );
+}
+.edge-fade.top {
+  top: 0;
+  height: 22px;
+  background: linear-gradient(to top, var(--fade-0), var(--fade-2));
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+/* Scroll bodies reserve room so the last row is never permanently parked
+   under the dock. */
+.body-scroll.docked { padding-bottom: 104px; }
+.body-scroll.docked-tall { padding-bottom: 158px; }
+
+/* ── Bottom search: the activated state ─────────────────────────────────── */
+
+/* On activation the field animates UP over the keyboard and the tab bar
+   collapses away — `.searchToolbarBehavior(.minimize)`. The field is
+   `--glass-solid`, not `--glass`: you are reading and editing text in it. */
+.search-float {
+  position: absolute;
+  left: 12px; right: 12px;
+  z-index: 27;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 16px;
+  color: var(--text-3);
+}
+.search-float .cancel {
+  margin-left: auto;
+  font-size: 15px;
+  color: var(--primary);
+  flex: 0 0 auto;
+}
+
+/* A drawn keyboard, so "the field sits above the keyboard" is verifiable
+   rather than asserted. */
+.keyboard {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 292px;
+  z-index: 25;
+  background: var(--inner);
+  border-top: 1px solid var(--border);
+  display: grid;
+  grid-template-rows: repeat(4, 1fr);
+  gap: 8px;
+  padding: 10px 4px 34px;
+}
+.keyboard .krow {
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+  padding: 0 3px;
+}
+.keyboard .key {
+  flex: 1 1 0;
+  border-radius: 5px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  max-width: 34px;
+}
+.keyboard .key.wide { max-width: 68px; }
+.keyboard .key.space { max-width: 150px; }
+
+/* ── Glass composer (chat) ──────────────────────────────────────────────── */
+
+/* The chat composer is bottom-anchored too, so it and the tab bar would
+   collide. Resolution: entering a thread hides the tab bar (it is a pushed
+   destination, not a tab root) and the composer takes the dock's place —
+   same 21pt inset, same material, one piece of bottom furniture at a time. */
+.composer-float {
+  position: absolute;
+  left: 12px; right: 12px;
+  bottom: 26px;
+  z-index: 26;
+  border-radius: 26px;
+  padding: 8px 8px 8px 10px;
+}
+.composer-float .armed-row { padding: 2px 2px 8px; }
+.composer-float .composer-bar { gap: 8px; }
+.composer-float .cfield {
+  background: transparent;
+  border: 0;
+  padding: 8px 4px;
+}
+
+/* ── Host switcher (multi-host) ─────────────────────────────────────────── */
+
+/* A pill in the large-title row, NOT a modal gate before every session:
+   it shows the current host, and tapping it opens the host list. The default
+   is the last host used, so the common path is zero taps. */
+.host-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 5px 7px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  max-width: 100%;
+  min-width: 0;
+}
+.host-switch .hname {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.host-switch .caret-d { color: var(--text-3); font-size: 11px; flex: 0 0 auto; }
+
+/* Host mark: a machine, not a backend — square-ish and neutral, so it can
+   never be mistaken for the round-cornered tinted backend badge. */
+.host-mark {
+  width: 22px; height: 22px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  flex: 0 0 auto;
+  background: var(--inner);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  position: relative;
+}
+.host-mark.lg { width: 34px; height: 34px; border-radius: 10px; font-size: 15px; }
+/* Reachability rides on the mark itself, so a host is never shown without
+   its state. */
+.host-mark .rdot {
+  position: absolute;
+  right: -2px; bottom: -2px;
+  width: 8px; height: 8px;
+  border-radius: 999px;
+  background: var(--success);
+  border: 1.5px solid var(--card);
+}
+.host-mark.lg .rdot { width: 11px; height: 11px; right: -3px; bottom: -3px; }
+.host-mark.down .rdot { background: var(--danger); }
+.host-mark.unknown .rdot { background: var(--text-3); }
+.host-mark.down { opacity: 0.6; }
+
+/* Qualified backend name: "Claude · mac-studio". The same backend name can
+   exist on two machines, so the host is part of the identity, never a
+   subtitle you can miss. */
+.qualified {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+.qualified .qhost {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qualified .qsep { color: var(--text-3); font-size: 10px; }
+
+/* Host group header in a picker — the disambiguator when two machines both
+   run "Claude". */
+.host-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px 7px;
+  background: var(--inner);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--text-2);
+}
+.host-group .hg-meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── The `/` accelerator ────────────────────────────────────────────────── */
+
+/* Skills are an input accelerator, not a destination. The picker is therefore
+   not a sheet: it is the composer growing upward. Nothing to present, nothing
+   to dismiss, and the thread stays readable behind it — you can still see what
+   you are replying to while you choose. */
+
+/* A softer scrim than a modal's: this is not a mode, it is a field with
+   suggestions attached, so the thread must stay legible. */
+.scrim.soft { background: rgb(0 0 0 / 0.18); }
+
+.fzcomposer {
+  position: absolute;
+  left: 12px; right: 12px;
+  bottom: 26px;
+  z-index: 32;
+  border-radius: 26px;
+  padding: 8px 8px 8px 10px;
+}
+
+/* The result list grows UP from the composer, so the first result is closest
+   to both the caret and the thumb. Ordinary lists read top-down; this one is
+   ordered by proximity to where you are typing. */
+.fzpanel {
+  position: absolute;
+  left: 12px; right: 12px;
+  /* Sits directly above the composer it belongs to — the gap is the same 8pt
+     the armed row used to occupy, so the two read as one control. */
+  bottom: 98px;
+  max-height: 340px;
+  z-index: 32;
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.fzhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 11px;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+.fzhead .fzcount {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.fzlist { display: flex; flex-direction: column; }
+
+.fzrow {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 10px 13px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  min-width: 0;
+}
+.fzrow:first-child { border-top: 0; }
+/* Best match is pre-selected: the keyboard-only path is `/`, three letters,
+   Return — the list never has to be touched. */
+.fzrow.sel { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+
+.fzname {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  flex: 0 0 auto;
+}
+/* Matched characters marked, so it is visible WHY a row survived the filter —
+   otherwise fuzzy matching looks like guessing. */
+.fzname .fz {
+  color: var(--primary);
+  font-weight: 700;
+}
+.fzdesc {
+  font-size: 12px;
+  color: var(--text-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fzrow .kbd { margin-left: auto; flex: 0 0 auto; }
+
+.fzfoot {
+  padding: 9px 13px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-3);
+  background: var(--inner);
+  border-top: 1px solid var(--border);
+}
+
+/* The typed query lives in the composer itself — there is no second text
+   field anywhere in this interaction. */
+.cfield.typed {
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--text-1);
+}
+
+/* ── Inserted template ──────────────────────────────────────────────────── */
+
+/* What insertion produces: ordinary editable text, placeholders VISIBLE.
+   Editing in the composer IS the parameter mechanism, which is why there is
+   no form and the skill entity needs no parameter schema. */
+.cfield.filled {
+  display: block;
+  padding: 6px 6px 2px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--text-1);
+}
+.ph {
+  border-radius: 5px;
+  padding: 1px 4px;
+  background: var(--inner);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 14px;
+}
+/* The first placeholder is selected with the cursor on it: type to replace,
+   Tab for the next. */
+.ph.on {
+  background: color-mix(in srgb, var(--primary) 20%, transparent);
+  border-color: var(--primary-border);
+  color: var(--primary-text);
+}
+/* A count, not a wizard — it reports what is still blank without gating Send. */
+.phcount {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.cbtn.send {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: transparent;
+}

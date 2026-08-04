@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Localis — 设计图 (hi-fi)</title>
+
+<!-- The prototype's own layers. Hi-fi refines them; it does not replace them,
+     because the prototype is the approved artefact and a layout that moved
+     here would be a regression rather than an improvement. -->
+<link rel="stylesheet" href="../prototype/styles.css">
+<link rel="stylesheet" href="../prototype/glass.css">
+<link rel="stylesheet" href="../prototype/pad.css">
+<link rel="stylesheet" href="../prototype/activity.css">
+<link rel="stylesheet" href="../prototype/viewer.css">
+<!-- The visual design, layered last. -->
+<link rel="stylesheet" href="hifi.css">
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="brand">
+    <h1>Localis</h1>
+    <span class="tag">设计图 · hi-fi</span>
+  </div>
+
+  <div class="control">
+    <label>View</label>
+    <div class="seg" id="view-seg">
+      <button data-view="board" aria-pressed="true">All screens</button>
+      <button data-view="device" aria-pressed="false">One screen</button>
+    </div>
+  </div>
+
+  <div class="control" id="screen-control" hidden>
+    <label>Screen</label>
+    <select class="shell-select" id="screen-select"></select>
+  </div>
+
+  <div class="control">
+    <label>Mode</label>
+    <div class="seg" id="mode-seg">
+      <button data-mode="light" aria-pressed="true">Light</button>
+      <button data-mode="dark" aria-pressed="false">Dark</button>
+    </div>
+  </div>
+
+  <div class="control">
+    <label>Seed</label>
+    <select class="shell-select" id="seed-select">
+      <option value="appleBlue" selected>appleBlue</option>
+      <option value="blue">blue</option>
+      <option value="purple">purple</option>
+      <option value="teal">teal</option>
+      <option value="orange">orange</option>
+    </select>
+  </div>
+
+  <div class="control">
+    <label>Neutral</label>
+    <select class="shell-select" id="neutral-select">
+      <option value="slate" selected>slate</option>
+      <option value="neutral">neutral</option>
+    </select>
+  </div>
+
+  <!-- Hi-fi specific: prove the accessibility fallbacks rather than assert
+       them. Both are real iOS settings users turn on. -->
+  <div class="control">
+    <label>Transparency</label>
+    <div class="seg" id="rt-seg">
+      <button data-rt="off" aria-pressed="true">Normal</button>
+      <button data-rt="on" aria-pressed="false">Reduced</button>
+    </div>
+  </div>
+
+  <div class="control">
+    <label>Annotations</label>
+    <div class="seg" id="pins-seg">
+      <button data-pins="off" aria-pressed="true">Off</button>
+      <button data-pins="on" aria-pressed="false">On</button>
+    </div>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="legend">
+    <span><b>设计图 · hi-fi.</b> Real type ramp, drawn icons, refined material and motion.</span>
+    <span><b>Structure is unchanged</b> from the approved prototype — if a layout moved, that is a bug.</span>
+    <span><b>Every value is a token.</b> No literal colors or font sizes in <code>hifi.css</code>.</span>
+    <span><b>Reduced transparency</b> is a real toggle above, not a claim.</span>
+  </div>
+  <div id="stage-root"></div>
+</div>
+
+<!-- The prototype's model and screens, reused verbatim. -->
+<script src="../prototype/tokens.js"></script>
+<script src="../prototype/model.js"></script>
+<script src="../prototype/screens.js"></script>
+<script src="../prototype/screens-ipad.js"></script>
+<script src="../prototype/screens-activity.js"></script>
+<!-- The hi-fi visual system. -->
+<script src="type.js"></script>
+<script src="icons.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var state = {
+    view: 'board', screen: 'sessions', mode: 'light',
+    seed: 'appleBlue', neutral: 'slate', pins: false, reduceTransparency: false
+  };
+
+  var root = document.getElementById('stage-root');
+  var byId = {};
+  window.Screens.forEach(function (s) { byId[s.id] = s; });
+
+  // The type ramp is injected rather than hand-written into hifi.css, so
+  // type.js stays the single source of truth for every size in the design.
+  (function injectType() {
+    var el = document.createElement('style');
+    el.textContent = window.Type.stylesheet();
+    document.head.appendChild(el);
+  })();
+
+  /**
+   * Upgrade the prototype's placeholder icons to drawn ones.
+   *
+   * The prototype rendered icons as dashed boxes containing a geometric
+   * character. Rather than fork every screen to change them, hi-fi rewrites
+   * them after render — which also guarantees the two versions cannot drift
+   * structurally, because they are literally the same markup.
+   */
+  var GLYPH_TO_ICON = {
+    '☰': 'sessions', '⚙': 'settings', '⚲': 'search',
+    '+': 'plus', '‹': 'back', '›': 'chevron', '▾': 'caretDown',
+    '✓': 'check', '/': 'slash', '■': 'stop', '↑': 'send',
+    '×': 'close', 'i': 'info',
+    '▣': 'mac', '▤': 'laptop', '◫': 'nas', '◆': 'skill'
+  };
+
+  function upgradeIcons(scope) {
+    // Tab-bar and nav icons: replace the dashed box with a drawn glyph.
+    Array.prototype.forEach.call(scope.querySelectorAll('.ic'), function (el) {
+      if (el.tagName.toLowerCase() === 'svg') return;
+      var key = GLYPH_TO_ICON[el.textContent.trim()];
+      if (!key) return;
+      el.outerHTML = window.Icons.icon(key, 22);
+    });
+    // Host marks carry their machine kind as a glyph.
+    Array.prototype.forEach.call(scope.querySelectorAll('.host-mark'), function (el) {
+      var t = el.firstChild;
+      if (!t || t.nodeType !== 3) return;
+      var key = GLYPH_TO_ICON[t.textContent.trim()];
+      if (!key) return;
+      var size = el.classList.contains('lg') ? 20 : 13;
+      t.replaceWith(document.createRange().createContextualFragment(
+        window.Icons.icon(key, size)
+      ));
+    });
+    // Standalone action glyphs in buttons.
+    Array.prototype.forEach.call(
+      scope.querySelectorAll('.cbtn, .island, .chev, .caret-d, .away-x, .dbtn'),
+      function (el) {
+        if (el.querySelector('svg')) return;
+        var key = GLYPH_TO_ICON[el.textContent.trim()];
+        if (!key) return;
+        var size = el.classList.contains('island') ? 26 : 16;
+        el.innerHTML = window.Icons.icon(key, size);
+      }
+    );
+  }
+
+  /** Map the prototype's ad-hoc sizes onto the real ramp. */
+  var TYPE_MAP = [
+    ['.lt', 'display'], ['.nb-title .t', 'headline'], ['.rtitle', 'headline'],
+    ['.bubble', 'body'], ['.rsub', 'subhead'], ['.rtime', 'caption'],
+    ['.section-header', 'sectionLabel'], ['.tabbar-float .tab', 'tabLabel'],
+    ['.qualified .qhost', 'mono'], ['.pill', 'caption'],
+    ['.footnote', 'footnote'], ['.code', 'code'], ['.fzname', 'mono'],
+    ['.fzdesc', 'footnote'], ['.now-cmd', 'code'], ['.tool .tname', 'code'],
+    ['.tool .tmeta', 'mono'], ['.st-t', 'footnote'], ['.st-s', 'caption'],
+    ['.flabel', 'subhead'], ['.mono-strong', 'mono'], ['.hname', 'footnote']
+  ];
+
+  function applyType(scope) {
+    TYPE_MAP.forEach(function (pair) {
+      Array.prototype.forEach.call(scope.querySelectorAll(pair[0]), function (el) {
+        el.classList.add('t-' + pair[1]);
+      });
+    });
+  }
+
+  function applyTokens() {
+    var vars = window.Tokens.buildTokens(
+      window.Tokens.SEEDS[state.seed], state.neutral, state.mode === 'dark'
+    );
+    Array.prototype.forEach.call(document.querySelectorAll('.frame'), function (f) {
+      Object.keys(vars).forEach(function (k) { f.style.setProperty(k, vars[k]); });
+      f.classList.toggle('reduce-transparency', state.reduceTransparency);
+    });
+  }
+
+  function frameHTML(screen) {
+    var pad = screen.pad ? ' pad' : '';
+    return '<div class="frame-holder' + pad + '"><div class="frame-wrap' + pad + '">' +
+      '<div class="frame' + pad + '" data-screen="' + screen.id + '">' +
+        '<div class="notch"></div>' + screen.render() +
+        '<div class="home-ind"></div>' +
+      '</div><div class="pins"' + (state.pins ? '' : ' hidden') + '></div>' +
+      '</div></div>';
+  }
+
+  function captionHTML(s, clickable) {
+    return '<div class="caption"' + (clickable ? ' data-open="' + s.id + '"' : '') + '>' +
+      '<div class="idx">' + s.idx + '</div><div class="name">' + s.name + '</div>' +
+      '<div class="desc">' + s.desc + '</div></div>';
+  }
+
+  function render() {
+    if (state.view === 'board') {
+      root.innerHTML = '<div class="board">' + window.Screens.map(function (s) {
+        return '<div class="frame-slot' + (s.pad ? ' pad' : '') + '">' +
+          captionHTML(s, true) + frameHTML(s) + '</div>';
+      }).join('') + '</div>';
+    } else {
+      var s = byId[state.screen];
+      root.innerHTML = '<div class="device"><div>' + captionHTML(s, false) +
+        frameHTML(s) + '</div>' + notesHTML(s) + '</div>';
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('.frame'), function (f) {
+      upgradeIcons(f);
+      applyType(f);
+    });
+    applyTokens();
+  }
+
+  function notesHTML(s) {
+    return '<div class="notes-panel"><h2>' + s.idx + ' · ' + s.name + '</h2>' +
+      '<p class="sub">' + s.desc + '</p>' +
+      '<h3>Design notes</h3><ol>' + (s.notes || []).map(function (n) {
+        return '<li data-n="' + n[0] + '"><span class="npin">' + n[0] +
+          '</span><span>' + n[1] + '</span></li>';
+      }).join('') + '</ol></div>';
+  }
+
+  function open(id) {
+    if (!byId[id]) return;
+    state.screen = id; state.view = 'device';
+    sync(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  document.addEventListener('click', function (e) {
+    var cap = e.target.closest('[data-open]');
+    if (cap) { open(cap.getAttribute('data-open')); return; }
+    var hot = e.target.closest('[data-goto]');
+    if (hot) open(hot.getAttribute('data-goto'));
+  });
+
+  function bindSeg(id, attr, key, bool) {
+    document.getElementById(id).addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (!b) return;
+      state[key] = bool ? b.getAttribute('data-' + attr) === 'on'
+                        : b.getAttribute('data-' + attr);
+      sync(); render();
+    });
+  }
+
+  function sync() {
+    function press(id, attr, match) {
+      Array.prototype.forEach.call(
+        document.getElementById(id).querySelectorAll('button'),
+        function (b) { b.setAttribute('aria-pressed', String(match(b.getAttribute('data-' + attr)))); }
+      );
+    }
+    press('view-seg', 'view', function (v) { return v === state.view; });
+    press('mode-seg', 'mode', function (v) { return v === state.mode; });
+    press('pins-seg', 'pins', function (v) { return (v === 'on') === state.pins; });
+    press('rt-seg', 'rt', function (v) { return (v === 'on') === state.reduceTransparency; });
+    document.getElementById('screen-control').hidden = state.view !== 'device';
+    document.getElementById('screen-select').value = state.screen;
+  }
+
+  bindSeg('view-seg', 'view', 'view');
+  bindSeg('mode-seg', 'mode', 'mode');
+  bindSeg('pins-seg', 'pins', 'pins', true);
+  bindSeg('rt-seg', 'rt', 'reduceTransparency', true);
+
+  var sel = document.getElementById('screen-select');
+  sel.innerHTML = window.Screens.map(function (s) {
+    return '<option value="' + s.id + '">' + s.idx + ' · ' + s.name + '</option>';
+  }).join('');
+  sel.addEventListener('change', function () { state.screen = sel.value; render(); });
+  document.getElementById('seed-select').addEventListener('change', function (e) {
+    state.seed = e.target.value; applyTokens();
+  });
+  document.getElementById('neutral-select').addEventListener('change', function (e) {
+    state.neutral = e.target.value; applyTokens();
+  });
+
+  var h = (location.hash || '').replace('#', '');
+  if (h && byId[h]) { state.screen = h; state.view = 'device'; }
+
+  sync();
+  render();
+})();
+</script>
+
+</body>
+</html>
