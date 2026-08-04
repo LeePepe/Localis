@@ -13,6 +13,7 @@ public enum SessionStoreContainer {
         StoredSession.self,
         StoredMessage.self,
         StoredBackend.self,
+        StoredHost.self,
     ])
 
     /// On-disk container for the app.
