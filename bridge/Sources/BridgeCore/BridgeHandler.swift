@@ -46,11 +46,18 @@ public actor BridgeHandler: BridgeHandling {
 
         // Auth first, before any handler runs. Checking inside each case would
         // make an unguarded case a silent hole rather than a compile error.
+        //
+        // **`invalid_token`, not `unauthorized`.** The code is not free text —
+        // the client switches on it (§6) and maps anything unrecognised to
+        // "malformed response", whose message tells the user the bridge is
+        // broken. `unauthorized` reads perfectly sensibly here and is wrong for
+        // exactly that reason: the phone would report a protocol fault instead
+        // of "re-pair with this Mac", which is the one thing that fixes it.
         var device: TokenStore.Grant?
         if route.requiresAuthentication {
             guard let token = request.bearerToken,
                   let grant = await tokens.grant(for: token) else {
-                return .error(status: 401, code: "unauthorized")
+                return .error(status: 401, code: "invalid_token")
             }
             device = grant
         }
@@ -139,7 +146,7 @@ public actor BridgeHandler: BridgeHandling {
         _ request: BridgeRequest,
         device: TokenStore.Grant?
     ) async -> BridgeResponse {
-        guard let device else { return .error(status: 401, code: "unauthorized") }
+        guard let device else { return .error(status: 401, code: "invalid_token") }
 
         guard let turn = TurnRequest.decode(
             body: request.body,
@@ -169,7 +176,7 @@ public actor BridgeHandler: BridgeHandling {
     }
 
     private func handleCancel(turnID: String, device: TokenStore.Grant?) async -> BridgeResponse {
-        guard let device else { return .error(status: 401, code: "unauthorized") }
+        guard let device else { return .error(status: 401, code: "invalid_token") }
 
         switch await coordinator.cancel(turnID: turnID, deviceID: device.deviceID) {
         case .cancelled:
