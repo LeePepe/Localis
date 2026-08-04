@@ -73,6 +73,14 @@ struct LiveBridgeIntegrationTests {
     /// specific failure a *refused handshake* produces: `URLSession` surfaces
     /// our `cancelAuthenticationChallenge` as `NSURLErrorCancelled`, and a
     /// connection that never reached TLS cannot produce it.
+    ///
+    /// **And why the delegate is recorded rather than inferred.** `-999` is
+    /// strong evidence the delegate ran, but it is still evidence: a task
+    /// cancelled for any other reason reports the same code. The third failure
+    /// class — the delegate never being invoked — is the one that masquerades
+    /// as the other two, because from the caller it is just "it didn't
+    /// connect", and it points at our own wiring rather than at any
+    /// certificate. `outcomes` turns that from an inference into a record.
     @Test("a connection pinned to the wrong key is refused")
     func wrongPinIsRefused() async throws {
         let endpoint = try LiveBridge.endpoint()
@@ -82,7 +90,8 @@ struct LiveBridgeIntegrationTests {
         // test would be asserting that the correct pin fails.
         #expect(wrong != (try LiveBridge.realPin()))
 
-        let http = PinnedHTTP(pin: wrong)
+        let outcomes = ChallengeLog()
+        let http = PinnedHTTP(pin: wrong, observer: outcomes.record)
         let request = try LiveBridge.modelsRequest(endpoint: endpoint, token: "unused-the-tls-layer-should-refuse-first")
 
         do {
@@ -104,6 +113,20 @@ struct LiveBridgeIntegrationTests {
                 """
             )
         }
+
+        // The delegate ran, and refused. Asserted separately from the error
+        // code because they fail for different reasons: an empty log means our
+        // session was never consulted (a wiring bug on this side), while
+        // `.proceeded` would mean it was consulted and let a wrong pin through.
+        #expect(
+            outcomes.all == [.refused],
+            """
+            expected exactly one refusal from PinnedSessionDelegate; recorded \
+            \(outcomes.all.map(\.rawValue)). An empty list means the \
+            delegate was never invoked — the failure was ours, not the \
+            certificate's.
+            """
+        )
     }
 
     /// The same request with the bridge's real pin reaches HTTP.
@@ -113,10 +136,19 @@ struct LiveBridgeIntegrationTests {
     /// which can only exist if the TLS handshake completed and the delegate
     /// accepted the certificate. Asserting 200 here would conflate the
     /// handshake with authentication, and a failure would not say which broke.
+    ///
+    /// The recorded `.proceeded` is what makes this about *our* pinning rather
+    /// than about TLS in general: a status code proves a handshake happened,
+    /// but only the delegate's own record proves that this session's pin check
+    /// is what allowed it. Together with the two unknowns this settles —
+    /// `URLCredential(trust:)` accepting a self-signed certificate, and
+    /// `SecTrustCopyCertificateChain` yielding the shape `evaluate` expects —
+    /// this is the test that cannot be written without a real bridge.
     @Test("the real pin completes the handshake and reaches HTTP")
     func realPinCompletesHandshake() async throws {
         let endpoint = try LiveBridge.endpoint()
-        let http = PinnedHTTP(pin: try LiveBridge.realPin())
+        let outcomes = ChallengeLog()
+        let http = PinnedHTTP(pin: try LiveBridge.realPin(), observer: outcomes.record)
         let request = try LiveBridge.modelsRequest(endpoint: endpoint, token: "deliberately-invalid")
 
         let (_, response) = try await http.perform(request)
@@ -125,6 +157,16 @@ struct LiveBridgeIntegrationTests {
         // should produce; the assertion is deliberately wide because this test
         // is about the transport, not the status code.
         #expect(response.statusCode > 0)
+
+        #expect(
+            outcomes.all == [.proceeded],
+            """
+            expected exactly one PinnedSessionDelegate approval; recorded \
+            \(outcomes.all.map(\.rawValue)). An empty list with a \
+            successful response would mean the connection succeeded *without* \
+            our pin check — TLS working, pinning bypassed.
+            """
+        )
     }
 
     // MARK: - The scoped goal: pair, then GET /v1/models
@@ -177,6 +219,42 @@ struct LiveBridgeIntegrationTests {
         // A catalog that parsed is a 200 that parsed: `models()` throws on any
         // other status (BridgeClient.swift:429) and on a body it cannot decode.
         #expect(catalog.backends.isEmpty == false)
+    }
+}
+
+/// Records what `PinnedSessionDelegate` did with each challenge.
+///
+/// **Synchronous under a lock, deliberately not an actor.** `URLSession` calls
+/// its delegate on its own queue, so some synchronisation is required either
+/// way — but an actor would have to be reached from the delegate's synchronous
+/// completion path via `Task { }`, and that append is not ordered against the
+/// request finishing. The assertion could then read an empty log *while the
+/// delegate had in fact run*, which is precisely the confusion this type exists
+/// to remove: "never invoked" and "not appended yet" must not look alike.
+///
+/// A lock makes the record complete by the time `perform` returns, because the
+/// challenge is necessarily decided before the response is.
+final class ChallengeLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var outcomes: [PinnedSessionDelegate.ChallengeOutcome] = []
+
+    var all: [PinnedSessionDelegate.ChallengeOutcome] {
+        lock.lock()
+        defer { lock.unlock() }
+        return outcomes
+    }
+
+    /// Passed to `PinnedHTTP` as the observer.
+    ///
+    /// `@Sendable` and called on whatever queue `URLSession` chose; the lock is
+    /// what makes that safe. `@unchecked Sendable` on the type is the standard
+    /// consequence of hand-rolling that synchronisation.
+    var record: @Sendable (PinnedSessionDelegate.ChallengeOutcome) -> Void {
+        { [self] outcome in
+            lock.lock()
+            outcomes.append(outcome)
+            lock.unlock()
+        }
     }
 }
 
