@@ -53,13 +53,27 @@ public actor BridgeHandler: BridgeHandling {
         // broken. `unauthorized` reads perfectly sensibly here and is wrong for
         // exactly that reason: the phone would report a protocol fault instead
         // of "re-pair with this Mac", which is the one thing that fixes it.
+        //
+        // **`token_revoked` is reserved for a token that really was revoked.**
+        // Both codes are a 401 and look identical on the wire, so the phone can
+        // only believe what it is told — and it acts on them differently:
+        // `token_revoked` erases the Keychain entry for this host, while
+        // `invalid_token` only abandons the request. Widening the revoked code
+        // to "anything I do not recognise" would delete a working pairing over a
+        // corrupted header, and nothing on the client side could catch it.
         var device: TokenStore.Grant?
         if route.requiresAuthentication {
-            guard let token = request.bearerToken,
-                  let grant = await tokens.grant(for: token) else {
+            guard let token = request.bearerToken else {
                 return .error(status: 401, code: "invalid_token")
             }
-            device = grant
+            switch await tokens.lookup(token: token) {
+            case .granted(let grant):
+                device = grant
+            case .revoked:
+                return .error(status: 401, code: "token_revoked")
+            case .unknown:
+                return .error(status: 401, code: "invalid_token")
+            }
         }
 
         switch route {

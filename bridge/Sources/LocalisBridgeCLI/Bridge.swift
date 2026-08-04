@@ -14,16 +14,32 @@ import Foundation
 @main
 struct Bridge {
     static func main() async {
+        // Read once, so the failure line below can say what actually failed.
+        // "failed to start" is wrong for `unpair` — the operator was not
+        // starting anything, and a message that describes the wrong action
+        // sends them to look at the wrong thing.
+        let subcommand = CommandLine.arguments.dropFirst().first
+
         do {
+            // One subcommand, and it is not a route. Contract §1: "吊销由 Mac 侧
+            // 单向执行" — revocation is the Mac's act, and giving it an HTTP
+            // endpoint instead would let any paired phone revoke a *different*
+            // phone. That upgrades a stolen token from "read this Mac's model
+            // list" to "lock the owner out of their own Mac".
+            if subcommand == "unpair" {
+                try Unpair.run(arguments: Array(CommandLine.arguments.dropFirst(2)))
+                return
+            }
             try await run()
         } catch {
             // A fixed line, not the error's description: a start-up failure
             // routinely quotes a path, and stderr here may be a shared terminal
             // or a log.
-            FileHandle.standardError.write(Data("localis-bridge: failed to start\n".utf8))
-            // …but "failed to start" alone leaves the operator with nothing to
-            // do. A few failures have a remedy that can be named without
-            // naming anything sensitive, so they get one line more. The text is
+            let failed = subcommand == "unpair" ? "unpair failed" : "failed to start"
+            FileHandle.standardError.write(Data("localis-bridge: \(failed)\n".utf8))
+            // …but the fixed line alone leaves the operator with nothing to do.
+            // A few failures have a remedy that can be named without naming
+            // anything sensitive, so they get one line more. The text is
             // written here rather than taken from the error for the same reason
             // the line above is fixed.
             if let remedy = Self.remedy(for: error) {
@@ -44,6 +60,13 @@ struct Bridge {
             // replacing the file would unpair every device on this Mac
             // silently. Saying so turns a mystery into an instruction.
             return "the pairing record is damaged; delete it and pair this Mac again"
+        case Unpair.Failure.noDeviceID:
+            return "usage: localis-bridge unpair <device-id>"
+        case Unpair.Failure.unknownDevice(let id):
+            // The id is echoed because the operator typed it — it is their own
+            // input coming back, not a secret the bridge holds. Without it,
+            // "no such device" gives them nothing to compare against the list.
+            return "no paired device with id \(id); run `localis-bridge unpair --list`"
         default:
             return nil
         }
@@ -51,8 +74,7 @@ struct Bridge {
 
     private static func run() async throws {
         let port = environmentPort ?? 8765
-        let home = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".localis", isDirectory: true)
+        let home = configurationDirectory
 
         // The same key across restarts: the phone pinned it, so regenerating
         // would silently break every device that had already paired.
@@ -152,6 +174,28 @@ struct Bridge {
         while true {
             try await Task.sleep(for: .seconds(3600))
         }
+    }
+
+    /// Where the certificate, the key, the grants and the sessions live.
+    ///
+    /// `LOCALIS_BRIDGE_HOME` overrides it. This exists because
+    /// `homeDirectoryForCurrentUser` reads the *passwd* entry and ignores
+    /// `$HOME` — verified, not assumed — so setting `HOME` does not redirect
+    /// anything here. Without an explicit override, a second bridge started for
+    /// a test writes to the real `~/.localis`: it would issue grants into the
+    /// live file, and `unpair` run against it would revoke a device the operator
+    /// is actually using.
+    ///
+    /// The variable is read once. A path that changed between the server's read
+    /// and the subcommand's would put the grant and its revocation in different
+    /// files.
+    static var configurationDirectory: URL {
+        if let override = ProcessInfo.processInfo.environment["LOCALIS_BRIDGE_HOME"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".localis", isDirectory: true)
     }
 
     /// The port from the environment, when it is set to something usable.
