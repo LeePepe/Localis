@@ -771,6 +771,24 @@ The rules that come out of this, in order of how often they save us:
     than quietly passing on an empty subject. Negative assertions need this
     most: an assertion that something is absent is satisfied by an absent
     universe.
+28. **A fixture can move a test onto a different question.** A check meant to
+    prove that unknown reachability does not block connecting would, built on an
+    unpaired fixture, pass under either version of the rule — it would be
+    measuring pairing, not reachability, and saying nothing about the thing in
+    its own name. Mutation testing does not catch this: the wrong-fixture test
+    fails under the mutant too, for its own unrelated reason.
+
+    What catches it is a positive control **inside the test**: assert the
+    fixture really is connectable before asserting reachability does not block
+    it. One line, and it converts "this passed" into "this passed for the
+    reason claimed."
+
+    The same audit turned up the more common form of the problem: **every
+    existing assertion on that property was negative.** Seven tests asserted it
+    was false, none that it was true through the type under test, so replacing
+    the rule with a wrong one left all seven green. When adding a rule, count
+    the assertions on each side — a property with no positive case is a
+    property that can be broken in one direction silently.
 
 ## Hooks
 

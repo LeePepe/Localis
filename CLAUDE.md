@@ -53,6 +53,18 @@ the output for a `func` name finds nothing, because what is printed is the
 Filter by identifier, grep results by display name, and treat any run reporting
 zero tests as a run that did not happen.
 
+### SwiftLint does not see test code at all
+
+`.swiftlint.yml` excludes `LocalisTests` and `Packages/*/Tests`. That is
+deliberate — a `UUID(uuidString:)!` in a fixture reads better than the
+alternative — but it means **"SwiftLint passed" is not evidence about anything
+in a test file.** Verified rather than assumed: a deliberate force-unwrap and a
+badly named symbol planted in a test still produced zero output and `rc=0`.
+
+Clean and empty are the same result here. When a change lives in tests, the
+lint step is silent by design, and the guarantees have to come from the tests
+themselves.
+
 ### Addressing a simulator: use the UDID, never the name
 
 Both of these fail for reasons that have nothing to do with your code, and both
