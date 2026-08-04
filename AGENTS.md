@@ -258,6 +258,16 @@ The rules that come out of this, in order of how often they save us:
    `if status == .streaming` block indented to look like the loop body. Which
    lines belong to which scope is a thing to check, not to read.
 
+   A control can also fail to run at all, and the transcript will not say so.
+   Verifying rule 16's line-break instance, store ran
+   `git show …:CLAUDE.md | grep -c "<full sentence>" && … grep -c "<fragment>"`
+   — the wrapped sentence matched nothing, `grep -c` exits 1 on zero matches,
+   and `&&` dropped the positive control silently. The output ended with a `0`
+   under the right heading and looked complete. **Join control and subject with
+   `;`, never `&&`**, and count the outputs against the number of commands you
+   wrote: a control that vanishes leaves the run looking like the case where
+   everything agreed.
+
    The general form is about the *verdict* rather than the code: **an aggregate
    signal fed by several sources is evidence for none of them individually.** A
    gate script's self-test judged success by exit code alone, and three probes
@@ -572,6 +582,47 @@ The rules that come out of this, in order of how often they save us:
     sourced. **Quote the command you actually ran, pipes included; if you are
     summarising, say "summarising."** A cleaned-up command reads as evidence
     and is memory.
+
+    **The query can smuggle in an assumption about the very thing being
+    asked.** The two layers above are about arguments missing from the output.
+    This one is about an argument that is present, correct, and answering a
+    narrower question than the one being reported. Four in one day, all from
+    people who did search:
+
+    - **store**, judging whether PR #49 filtered unpaired hosts: grepped
+      `HostListModel.swift`, found nothing, reported "#49 has no `.paired`
+      filter." The filter was in `HostProbing.swift:53`, inside the probe
+      rather than at the call site. The grep encoded *where store's own
+      implementation had put it* — and "which layer holds this rule" was the
+      question.
+    - **team-lead**, checking a merged rule survived a squash: grepped
+      `self-expiring`, got zero, nearly concluded the rule was lost. That word
+      was in the commit subject, never in the prose. Confirmed here: one hit
+      across commit subjects, zero in `AGENTS.md`.
+    - **team-lead**, confirming the CLAUDE.md preamble landed: grepped
+      `prove that tool would have spoken up`, got zero. The sentence wraps
+      between `tool` and `would` (`CLAUDE.md:38-39`). Still zero today; the
+      unwrapped fragment `would have spoken up` returns 1.
+    - **core**, on whether a change would survive CI: ran `xcodebuild build`,
+      which does not compile the test target, and read its success as an
+      answer about `xcodebuild test`.
+
+    In each, the tool worked and the answer was true — of the file searched,
+    of the prose, of the unwrapped line, of the build. **A true answer to a
+    question you did not mean to ask arrives with no marker distinguishing it
+    from the answer you wanted**, and reads as the stronger claim: "not in
+    `HostListModel.swift`" becomes "not in #49" between finding and reporting.
+
+    Executable, in the order they cost the least: **grep for a fragment short
+    enough that no line break can split it**, and never for a remembered
+    sentence. **Before "X does not exist," name a place X would be if it did
+    and you have not looked** — one alternative layer, one alternative
+    spelling. **When the claim is about someone else's code, do not use your
+    own file layout as the map**; ask for the symbol across the whole target,
+    not for the line where you would have written it. And **report the
+    question, not just the verdict** — "no `.paired` filter in
+    `HostListModel.swift`" invites the correction that "#49 has no `.paired`
+    filter" does not.
 
     Two more limits on the same tool, both of which produced wrong counts that
     a ruling then rested on. **A hand-written pattern covers the forms its
