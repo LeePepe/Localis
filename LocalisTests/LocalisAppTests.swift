@@ -192,7 +192,13 @@ struct LocalisAppTests {
         // `composer != nil` was the whole assertion here, and it is the shape
         // this suite exists to avoid: a composer that exists and a composer the
         // user can type into are different claims, and only the first was
-        // checked. What follows asserts the second, whichever way it goes.
+        // checked.
+        //
+        // The existence check is *kept*, not replaced — `#require` fails the
+        // test on nil exactly as the old `#expect(... != nil)` did, and core's
+        // mutation round confirmed it earns its place: setting
+        // `composer = nil` in `apply` reddens this test by name. What follows
+        // adds the second claim on top.
         let composer = try #require(await model.composer)
         #expect(composer.canSend == false)
         #expect(composer.blockedReason != nil)
