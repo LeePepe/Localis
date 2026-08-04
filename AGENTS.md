@@ -641,15 +641,38 @@ The rules that come out of this, in order of how often they save us:
     `total > 0` before reading `pending`.
 
     Its companion, from the same hour: after a repo-wide fix lands on `main`,
-    **branches that have not rebased keep failing exactly as before.** A red
-    that outlives its fix invites the reading that the fix did not work, and
-    the check to run first is `git log origin/main..HEAD` on the branch, not a
-    re-examination of the fix.
+    **branches that have not rebased keep failing exactly as before** — and
+    "exactly" is literal. The step conclusions match too: `gitleaks detect`
+    failure, five `skipped` behind it, identical to the run before the fix
+    existed. What separates the two cases is whether `.gitleaksignore` is
+    present in *that tree*, a fact the CI output never mentions. So a red
+    outliving its fix does not merely invite the reading that the fix failed —
+    **every piece of evidence in hand supports it**, and refuting it requires
+    a quantity the logs do not contain. Run `git log origin/main..HEAD` on the
+    branch before re-examining the fix.
 
-    Also from the same hour, worth knowing before it costs a round: `gh pr
-    view --json headRefOid` can lag behind `git ls-remote` by a minute or so.
-    Pinning a monitor to a SHA read from `gh` can leave it waiting on a head
-    that no longer exists.
+    Also on reading CI state through `gh`: **the aggregate counts go stale, and
+    stay stale.** `headRefOid` can trail `git ls-remote` by a minute;
+    `statusCheckRollup` was observed returning `pending=1` for nine minutes
+    across eighteen polls while the individual checks had all completed
+    successfully some time earlier. Treat a run as finished only when the head
+    matches `git ls-remote`, `total > 0`, and every *individual* check reports
+    completed. The rollup's pending count is not evidence.
+22. **`gitleaks detect` reads every reachable object, not your branch's
+    history.** A blob on a branch that has never been merged still fails the
+    scan on `main`. Measured, because the inference ran the other way: the
+    offending commit is not an ancestor of `main`
+    (`git merge-base --is-ancestor` says no), which suggested the exemption
+    covering it must be inert — but removing `.gitleaksignore` from a `main`
+    worktree turns the scan red, so the exemption is doing real work against
+    an object `main` cannot reach.
+
+    Two consequences. Any unmerged branch can fail everyone's builds, which is
+    what "one finding blocked five unrelated PRs" actually meant. And when
+    merging a long-lived branch, the *new* blob it introduces is a separate
+    finding from the old one: an exemption pinned to the original commit does
+    not cover the squashed copy. Check what the merge would introduce before
+    merging, not after.
 
 ## Hooks
 
@@ -745,3 +768,15 @@ testflight → Run workflow with `force=true`.
   your own draft names something, grep it before someone builds on it. The
   reviewer caught this one, in a ruling whose entire subject was references
   that nothing validates.
+
+  There is a further turn, and it is the one to watch for: **the act of
+  verifying can itself land on the wrong object.** A comment cited "#34, in
+  progress"; the person who had just merged pull request 34 read it as stale
+  and moved to correct it. Those are different 34s — one a task, one a PR, in
+  numbering spaces that overlap by coincidence. Checking whether the sentence
+  was still true (the catch-all it describes is still at
+  `BridgeClient.swift:376`) is what stopped a correct comment from being
+  "updated" into a wrong one. Note the direction of damage: a freshly revised
+  wrong reference is **harder** to doubt than a stale correct one, because
+  recent edits read as maintained. Before correcting a reference, confirm
+  which namespace it belongs to and whether the claim still holds.
