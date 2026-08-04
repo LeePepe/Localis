@@ -175,4 +175,6 @@ private struct ScriptedTransport: AgentTransport {
     }
 
     func probe(_ backend: AgentBackend) async -> HostReachability { .reachable }
+
+    func refresh(_ backend: AgentBackend) async -> BackendDescription { .listed(backend) }
 }

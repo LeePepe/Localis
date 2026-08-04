@@ -65,4 +65,26 @@ public protocol AgentTransport: Sendable {
     /// including the reachable ones. `.unreachable(reason:)` is the failure
     /// channel; there is no second one.
     func probe(_ backend: AgentBackend) async -> HostReachability
+
+    /// What the host says about `backend` right now (#41).
+    ///
+    /// **Why this is separate from `probe` rather than a richer return type on
+    /// it.** `probe` answers a question about the *host* — can this machine be
+    /// reached, and if not, why — and the host list renders that for a whole
+    /// Mac. This answers a question about one *backend*: is the agent signed in,
+    /// and is it still there at all. The two have different right answers
+    /// exactly when it matters, a reachable Mac whose agent is signed out, and
+    /// folding them into one call would put a per-backend fact into every
+    /// host-list row that does not display it.
+    ///
+    /// **The value must be the host's, not storage's.** Both repositories drop
+    /// `availability` on read, deliberately: it answers "right now", and a
+    /// week-old `not_logged_in` must not grey out an agent the user has since
+    /// signed into. That drop is only safe because this call supplies the fresh
+    /// answer — an implementation returning a stored backend here would close
+    /// the loop with the same stale value the drop exists to avoid.
+    ///
+    /// Non-throwing for the same reason as `probe`: this runs while a screen is
+    /// being drawn, and `.unknown` is the channel for "could not ask".
+    func refresh(_ backend: AgentBackend) async -> BackendDescription
 }

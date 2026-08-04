@@ -91,15 +91,62 @@ final class SessionDetailModel {
     /// Never throws and never sets `loadError`. An unreachable Mac is not a
     /// failure to open the conversation — the transcript is fine, and the
     /// composer's own `blockedReason` already says the link is down.
+    ///
+    /// **This is where the host's own answer about the backend lands (#41).**
+    /// `resolveBackend` read the backend from storage, which flattens
+    /// `availability` to `.available` because no disk can know whether an agent
+    /// is signed in right now. That flattening is only safe because this call
+    /// supplies the fresh value; before it existed, a signed-out agent got an
+    /// open composer and failed at the far end.
     private func reconnectIfPossible() async {
         guard let session, let backend else { return }
 
-        let reconnected = await service.reconnect(session, to: backend)
+        let (reconnected, description) = await service.reopen(session, to: backend)
+        apply(describing: description)
         // Re-projected through the same path as every other snapshot, so the
         // composer is derived from the session rather than being switched on
         // here. A local `canSend = true` would be a second opinion, and the two
         // would drift.
         apply(reconnected)
+    }
+
+    /// Records what the host said about this conversation's agent.
+    ///
+    /// Three answers and three sentences, because they are three different
+    /// things for the user to do. Collapsing them into "unavailable" would be
+    /// the same loss this edge exists to undo, one layer further up.
+    private func apply(describing description: BackendDescription) {
+        switch description {
+        case .listed(let live):
+            // The live value replaces the stored one, so anything reading
+            // `backend` downstream sees what the Mac says rather than what the
+            // disk kept.
+            backend = live
+            sendBlockedReason = live.isAvailable
+                ? nil
+                : String(localized: "This agent isn't signed in on the Mac.")
+
+        case .absent:
+            // The Mac answered and no longer lists this agent. Distinct from a
+            // missing host row, which `resolveBackend` words as "isn't on this
+            // Mac any more" — that one is about pairing, this one is about an
+            // agent that was removed from a machine still paired.
+            sendBlockedReason = String(
+                localized: "This Mac no longer offers this agent."
+            )
+
+        case .unknown:
+            // The host could not be asked, so it said nothing about the agent —
+            // and this must not be reported as signed out. Waiting fixes a
+            // sleeping Mac and never fixes a signed-out agent; naming the wrong
+            // one sends the user to sign in on a machine that is off.
+            //
+            // Deliberately leaves `sendBlockedReason` as `resolveBackend` left
+            // it. The composer's own `blockedReason` already says the link is
+            // down, and the session's status is unchanged, so nothing here is
+            // claiming the link works.
+            break
+        }
     }
 
     /// Finds the backend this session names, on the host it belongs to.
@@ -127,24 +174,17 @@ final class SessionDetailModel {
             // signing in fixes the first, re-pairing the second. Collapsing them
             // leaves the user with no idea which applies.
             //
-            // **The `else` cannot currently be reached (#29).** `match` comes
-            // from the repository, and both stores hand back `.available`
-            // unconditionally — deliberately, since a week-old `not_logged_in`
-            // must not grey out a backend the user has since signed into
-            // (`SessionRepository.restored`, and `availabilityIsNotRestored`
-            // pins it). That drop assumes a live `/v1/models` refresh supplies
-            // the current answer, and no such refresh reaches this value:
-            // `BackendCatalog` decodes `.unavailable(reason:)` correctly, but
-            // its only consumer is `BridgeClient.probe`, which reduces the whole
-            // catalog to a `Bool`. Measured 2026-08-04 over `Packages/*/Sources`
-            // and `Localis/Sources`.
+            // **`match` comes from storage, where this is always `.available`**,
+            // deliberately — a week-old `not_logged_in` must not grey out an
+            // agent the user has since signed into (`SessionRepository.restored`,
+            // and `availabilityIsNotRestored` pins it). So the sentence below is
+            // not reachable from this value alone, and never was.
             //
-            // Kept rather than deleted: the read path is right and the write
-            // path is missing, so removing the branch would make the gap
-            // invisible and cost the wording when it lands. Not blocked on #40
-            // either — a richer `probe` return type still leaves this `match`
-            // coming from storage. Delete this note once something hands a
-            // decoded availability to a view.
+            // The live answer arrives in `reconnectIfPossible`, which asks the
+            // host and overwrites both fields (#41). Kept here rather than
+            // deleted: this runs first and the transcript renders before the
+            // refresh returns, so without it a signed-out agent would show an
+            // open composer for as long as the request is in flight.
             sendBlockedReason = match.isAvailable
                 ? nil
                 : String(localized: "This agent isn't signed in on the Mac.")

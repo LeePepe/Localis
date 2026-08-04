@@ -130,4 +130,10 @@ private struct StubTransport: AgentTransport {
     }
 
     func probe(_ backend: AgentBackend) async -> HostReachability { result }
+
+    /// Mirrors `result`: this suite is about `probe`, and a description that
+    /// disagreed with it would be a second answer no test here reads.
+    func refresh(_ backend: AgentBackend) async -> BackendDescription {
+        result == .reachable ? .listed(backend) : .unknown
+    }
 }

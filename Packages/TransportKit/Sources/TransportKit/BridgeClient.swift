@@ -145,11 +145,57 @@ public actor BridgeClient: AgentTransport {
     /// Catching keeps the guarantee and keeps the cause; the error still does
     /// not escape.
     public func probe(_ backend: AgentBackend) async -> HostReachability {
+        switch await describe(backend) {
+        case .listed(let listed) where listed.isAvailable:
+            return .reachable
+        case .listed, .absent:
+            // The host answered, so this is not literally "offline" — but a
+            // backend it does not list, or lists as signed out, is equally
+            // unusable and there is no reason case for it. `.offline` is chosen
+            // over a more specific-sounding one because its advice is the only
+            // one that is harmless when wrong; `certificateRejected` here would
+            // send the user to re-pair a machine whose certificate is fine.
+            //
+            // Naming the backend's own state is what `refresh` is for (#41).
+            // Kept non-reachable here so `ChatService`'s reconnect guard
+            // behaves exactly as it did.
+            return .unreachable(reason: .offline)
+        case .unknown(let reachability):
+            return reachability
+        }
+    }
+
+    /// What this host says about `backend` right now (#41).
+    ///
+    /// Shares `describe` with `probe` rather than issuing its own request. Two
+    /// calls to `/v1/models` could disagree — a sign-in landing between them —
+    /// and the screen would show one answer while the composer acted on the
+    /// other.
+    public func refresh(_ backend: AgentBackend) async -> BackendDescription {
+        switch await describe(backend) {
+        case .listed(let listed):
+            return .listed(listed)
+        case .absent:
+            return .absent
+        case .unknown:
+            // The reachability is deliberately dropped. It says why the *host*
+            // could not answer, which the host list renders; carrying it into a
+            // per-backend answer would invite a screen to report "this Mac's
+            // certificate changed" as a fact about an agent.
+            return .unknown
+        }
+    }
+
+    /// One `/v1/models` round trip, read as a statement about one backend.
+    ///
+    /// The single place the catalogue is reduced, so `probe` and `refresh`
+    /// cannot drift into two opinions about what a given response means.
+    private func describe(_ backend: AgentBackend) async -> CatalogAnswer {
         let catalog: BackendCatalog
         do {
             catalog = try await models()
         } catch let error as LocalisError {
-            return HostReachability(failure: error)
+            return .unknown(HostReachability(failure: error))
         } catch {
             // `models()` maps everything into `LocalisError` before it escapes
             // (`AgentTransport.send`'s contract, and `perform`'s catch-all).
@@ -161,25 +207,25 @@ public actor BridgeClient: AgentTransport {
             // domain and code would describe where the guarantee broke, not why
             // the host is unreachable, and a cause that names the wrong thing is
             // worse for whoever reads the log than no cause at all.
-            return HostReachability(failure: .unreachable())
+            return .unknown(HostReachability(failure: .unreachable()))
         }
 
-        let listed = catalog.backends.first { $0.id == backend.id }
-        guard listed?.isAvailable == true else {
-            // The host answered, so this is not literally "offline" — but a
-            // backend it does not list, or lists as signed out, is equally
-            // unusable and there is no reason case for it. `.offline` is chosen
-            // over a more specific-sounding one because its advice is the only
-            // one that is harmless when wrong; `certificateRejected` here would
-            // send the user to re-pair a machine whose certificate is fine.
-            //
-            // Naming the backend's own state is #41's edge (the availability
-            // write-back), not this one. Kept non-reachable so `ChatService`'s
-            // reconnect guard behaves exactly as it did.
-            return .unreachable(reason: .offline)
+        guard let listed = catalog.backends.first(where: { $0.id == backend.id }) else {
+            return .absent
         }
+        return .listed(listed)
+    }
 
-        return .reachable
+    /// The reduction of one catalogue to one backend.
+    ///
+    /// Carries the reachability on `unknown` because `probe` needs it and
+    /// `refresh` must not have it — see `refresh`. Private: the seam the rest of
+    /// the app names is `BackendDescription`, and a second public vocabulary for
+    /// the same three outcomes is a second thing to keep in agreement.
+    private enum CatalogAnswer {
+        case listed(AgentBackend)
+        case absent
+        case unknown(HostReachability)
     }
 
     // MARK: - Streaming

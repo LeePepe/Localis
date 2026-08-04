@@ -353,5 +353,23 @@ struct HostRevocationTests {
         func probe(_ backend: AgentBackend) async -> HostReachability {
             HostReachability(failure: error)
         }
+
+        /// Nothing is known about the backend, because the host refused the
+        /// question (#41).
+        ///
+        /// `.unknown` for the same reason `probe` reports the constructed error
+        /// rather than a fixed one: this stub refuses everything, so it cannot
+        /// have learned that an agent is listed, or that it is missing. Either
+        /// of those would be a fact obtained from a machine that answered — and
+        /// the revocation these tests are about is precisely the case where it
+        /// did not.
+        ///
+        /// `.absent` in particular would be actively wrong: it would put "this
+        /// Mac no longer offers this agent" on screen for a device whose token
+        /// was revoked, sending the user to look for a missing agent instead of
+        /// re-pairing.
+        func refresh(_ backend: AgentBackend) async -> BackendDescription {
+            .unknown
+        }
     }
 }
