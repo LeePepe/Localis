@@ -187,8 +187,70 @@ struct LocalisAppTests {
         await model.load()
 
         #expect(await model.messages.map(\.text) == ["first", "second"])
-        #expect(await model.composer != nil)
         #expect(await model.loadError == nil)
+
+        // `composer != nil` was the whole assertion here, and it is the shape
+        // this suite exists to avoid: a composer that exists and a composer the
+        // user can type into are different claims, and only the first was
+        // checked.
+        //
+        // The existence check is *kept*, not replaced — `#require` fails the
+        // test on nil exactly as the old `#expect(... != nil)` did, and core's
+        // mutation round confirmed it earns its place: setting
+        // `composer = nil` in `apply` reddens this test by name. What follows
+        // adds the second claim on top.
+        let composer = try #require(await model.composer)
+        #expect(composer.canSend == false)
+        #expect(composer.blockedReason != nil)
+    }
+
+    /// A restored session cannot be replied to, and that is not a UI decision.
+    ///
+    /// `Session.canSend` is `status == .idle`, and every read path returns
+    /// `.disconnected` for a session that was written before this launch — the
+    /// process holds no connection to that Mac, so reporting `.idle` would be a
+    /// claim the app cannot back. The composer is therefore closed on open.
+    ///
+    /// **This is asserted because it is currently a dead end, not because it is
+    /// the design.** Nothing anywhere in the app writes `.idle` back:
+    /// `ChatService` sets it when a turn *finishes* (`ChatService.swift`), and
+    /// starting that turn already requires `canSend`. So the state machine has
+    /// no edge back in, and every stored session is permanently unsendable.
+    /// The missing edge is the connect attempt that belongs with the real
+    /// `BridgeClient` — task #25, which owns the fix.
+    ///
+    /// Pinned rather than left implicit so that closing that gap has to come
+    /// past this test: whoever adds the connect path will see this expectation
+    /// go red, which is the intended signal, not a regression.
+    ///
+    /// **The positive case — "a reconnected session can be replied to" — is
+    /// deliberately not written here, not even disabled.** It cannot pass
+    /// today, because there is no connect call to make it pass. And a
+    /// `.disabled` test has a failure mode of its own: when the block lifts and
+    /// the `.disabled` comes off, a test that turns green is indistinguishable
+    /// from one that was never strong enough to be red. Avoiding that needs the
+    /// test to be run red *first*, with the failure text recorded — which only
+    /// whoever writes the fix can do. It belongs to #25 with the fix.
+    @Test("a restored session opens with the composer closed, and says why")
+    func restoredSessionCannotSendYet() async throws {
+        let host = HostID()
+        let id = UUID()
+        let repository = try await Self.seeded(
+            (
+                host,
+                AgentBackend(id: "claude", displayName: "Studio Claude"),
+                Self.session(id: id, host: host, backendID: "claude", status: .idle)
+            )
+        )
+
+        let model = await Self.detailModel(repository: repository, sessionID: id)
+        await model.load()
+
+        // Seeded `.idle`, read back `.disconnected`: the normalisation is the
+        // point, so this asserts the round trip rather than the seed.
+        let composer = try #require(await model.composer)
+        #expect(composer.canSend == false)
+        #expect(composer.blockedReason?.isEmpty == false)
     }
 
     /// A session deleted between the list rendering and the tap says so.
