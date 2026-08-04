@@ -108,6 +108,33 @@ struct HostRevocation: Sendable {
             // (bridge-protocol.md :118). `unpaired()` clears the pinned SPKI as
             // well as setting the state, so the record and the Keychain agree
             // after this runs.
+            //
+            // **This case has no production emitter today, and that is not a
+            // defect in it.** Written down because "implemented, tested, never
+            // reached" and "implemented, tested, in use" look identical in the
+            // source — and the first one ends the investigation.
+            //
+            // The only way to reach it is a bridge that answers
+            // `token_revoked`: nothing in this app constructs `.tokenRevoked`
+            // itself, it is parsed from the wire in exactly two places
+            // (`BridgeClient.error(status:code:reason:)` and
+            // `LocalisError(wireCode:)`). Two things currently stop that from
+            // happening, and both are tracked:
+            //
+            //  1. bridge's three 401 emitters all send `invalid_token`, and
+            //     `Router.swift` has no unpair/revoke route at all — its
+            //     `TokenStore.revoke(deviceID:)` has no production caller. The
+            //     two halves of this feature were each written and each went
+            //     green with no line between them.
+            //  2. #32: the `stream` path never invokes the pinning delegate
+            //     (`session.bytes(for:)` does not use the session-level
+            //     delegate that `perform` relies on), and everything except
+            //     pairing goes through `stream`. So the request that would
+            //     carry a 401 back cannot currently be sent at all.
+            //
+            // Delete this note once the unpair route lands — not before,
+            // because until then a reader has no way to tell this branch from
+            // one that runs.
             Outcome(clearsCredentials: true) { $0.unpaired() }
 
         case .certificatePinMismatch:
@@ -117,6 +144,14 @@ struct HostRevocation: Sendable {
             // exactly the attack the pin exists to stop. The old pin stays so
             // the UI can point at this host specifically, which is why this
             // does not clear credentials.
+            //
+            // Reachability: not blocked on bridge the way `.tokenRevoked` is —
+            // a changed certificate needs no cooperation from the far end. It
+            // is blocked on #32 alone, and only partly: `perform` (pairing)
+            // does run the pinning delegate, so a mismatch during pairing
+            // reaches this today. Every later request goes through `stream`,
+            // where the delegate is never invoked, so a certificate that
+            // changes *after* pairing is currently not detected at all.
             Outcome(clearsCredentials: false) { $0.certificateChanged() }
 
         default:
