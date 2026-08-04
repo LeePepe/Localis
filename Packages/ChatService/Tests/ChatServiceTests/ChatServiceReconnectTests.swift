@@ -16,7 +16,24 @@ import TransportKit
 /// distinguishable only by whether anything was asked.
 private actor ProbeTransport: AgentTransport {
     private let answer: HostReachability
+    /// What the host says about the backend, independent of what the caller
+    /// passed in. Defaults to a listed, available agent — the answer that leaves
+    /// `probe` as the only guard, which is what every test written before #41
+    /// assumes.
+    private let description: BackendDescription
     private(set) var probeCount = 0
+    private(set) var refreshCount = 0
+
+    /// The id the default description reports.
+    ///
+    /// Matches `makeBackend()`'s id so the default answer describes the same
+    /// agent the tests hand in. Nothing reads the id today — `reconnect` asks
+    /// the transport about one backend and gets one answer back — but a
+    /// description naming a different agent would be a fixture that quietly
+    /// stopped being about the session under test.
+    private static let listed = BackendDescription.listed(
+        AgentBackend(id: "test-backend", displayName: "Test", capabilities: [.streaming])
+    )
 
     /// `true`/`false` kept as the convenience spelling: every test in this suite
     /// asks whether a reconnect happened, and none of them is about *why* a host
@@ -24,10 +41,21 @@ private actor ProbeTransport: AgentTransport {
     /// in front of the thing being read.
     init(answer: Bool) {
         self.answer = answer ? .reachable : .unreachable(reason: .offline)
+        self.description = Self.listed
     }
 
     init(answer: HostReachability) {
         self.answer = answer
+        self.description = Self.listed
+    }
+
+    /// A host that is up, describing a backend however the test says (#41).
+    ///
+    /// Reachable on purpose: a stub that refused both questions could not tell
+    /// a build that lost the availability guard from one that kept it.
+    init(describing description: BackendDescription) {
+        self.answer = .reachable
+        self.description = description
     }
 
     func send(_ request: TurnRequest) async throws -> TurnStream {
@@ -42,6 +70,29 @@ private actor ProbeTransport: AgentTransport {
     func probe(_ backend: AgentBackend) async -> HostReachability {
         probeCount += 1
         return answer
+    }
+
+    /// Lists the backend as the caller described it, available.
+    ///
+    /// **This fake answers the two questions independently on purpose.** Since
+    /// #41, `reconnect` requires both a reachable host *and* a listed, available
+    /// backend. Deriving this from `answer` would make one stub drive both
+    /// guards, and a regression that dropped the probe check entirely would stay
+    /// green — the availability answer alone would still block the reconnect,
+    /// and the suite would report the right outcome for the wrong reason.
+    ///
+    /// What the host says about the backend.
+    ///
+    /// **Deliberately ignores the `backend` argument.** Echoing it back would
+    /// make the fake answer "whatever you passed in", and in production that
+    /// argument always comes from storage, where both repositories flatten
+    /// `availability` to `.available` on read. A test that got its answer from
+    /// the argument would therefore be exercising a value the app can never
+    /// actually have, and would stay green against an implementation that read
+    /// the stored value instead of the host's — the exact bug #41 fixes.
+    func refresh(_ backend: AgentBackend) async -> BackendDescription {
+        refreshCount += 1
+        return description
     }
 }
 
@@ -401,25 +452,123 @@ struct ChatServiceReconnectTests {
 
     @Test("an unavailable backend is not reconnected around")
     func unavailableBackendIsNotProbed() async throws {
-        // A backend the Mac lists but is not signed into. The host would answer
-        // the probe — it is up — so a reconnect that asked only "is the Mac
-        // there" would report this session sendable and the send would fail at
-        // the far end, which is the accept-then-fail shape FR-053 rules out.
+        // A backend the Mac lists but is not signed into. The host answers the
+        // probe — it is up — so a reconnect that asked only "is the Mac there"
+        // would report this session sendable and the send would fail at the far
+        // end, which is the accept-then-fail shape FR-053 rules out.
+        //
+        // **The unavailability is the host's answer, not the argument's.**
+        // Before #41 this test passed `.unavailable` in as the `backend` and the
+        // guard read it off there — which could never happen in production,
+        // where that argument comes from storage and both repositories flatten
+        // `availability` to `.available` on read. The test was green against a
+        // guard reading a value the app could not produce.
         let session = Self.makeSession(status: .disconnected)
         let repository = InMemorySessionRepository(sessions: [session])
-        let transport = ProbeTransport(answer: true)
-        let service = Self.makeService(transport: transport, repository: repository)
-
-        let reconnected = await service.reconnect(
-            session,
-            to: AgentBackend(
-                id: "test-backend",
-                displayName: "Test",
-                capabilities: [.streaming],
-                availability: .unavailable(reason: nil)
+        let transport = ProbeTransport(
+            describing: .listed(
+                AgentBackend(
+                    id: "test-backend",
+                    displayName: "Test",
+                    capabilities: [.streaming],
+                    availability: .unavailable(reason: "not_logged_in")
+                )
             )
         )
+        let service = Self.makeService(transport: transport, repository: repository)
+
+        // Handed in exactly as storage would hand it over: available, because
+        // that is the only thing storage can say.
+        let reconnected = await service.reconnect(session, to: Self.makeBackend())
 
         #expect(reconnected.status == .disconnected)
+    }
+
+    /// A backend the Mac no longer has is not reconnected around either.
+    ///
+    /// Distinct from signed-out: re-signing in fixes that one and cannot fix
+    /// this one. Both block the reconnect, and asserting only the signed-out
+    /// case would leave a build that treated "not listed" as a green light
+    /// looking correct — it would hand the composer to a conversation whose
+    /// agent was deleted on the Mac.
+    @Test("a backend the Mac no longer lists is not reconnected around")
+    func absentBackendIsNotReconnected() async throws {
+        let session = Self.makeSession(status: .disconnected)
+        let repository = InMemorySessionRepository(sessions: [session])
+        let transport = ProbeTransport(describing: .absent)
+        let service = Self.makeService(transport: transport, repository: repository)
+
+        let reconnected = await service.reconnect(session, to: Self.makeBackend())
+
+        #expect(reconnected.status == .disconnected)
+    }
+
+    /// A host that could not be asked is not a green light.
+    ///
+    /// `.unknown` means the refresh established nothing. Treating it as
+    /// available would be the accept-then-fail shape arriving through the
+    /// silence rather than through a wrong answer — and silence is the common
+    /// case, since an unreachable Mac produces it every time.
+    @Test("a host that could not be asked does not reconnect the session")
+    func unknownDescriptionDoesNotReconnect() async throws {
+        let session = Self.makeSession(status: .disconnected)
+        let repository = InMemorySessionRepository(sessions: [session])
+        let transport = ProbeTransport(describing: .unknown)
+        let service = Self.makeService(transport: transport, repository: repository)
+
+        let reconnected = await service.reconnect(session, to: Self.makeBackend())
+
+        #expect(reconnected.status == .disconnected)
+    }
+
+    /// The host's answer reaches the caller, not just the guard (#41).
+    ///
+    /// This is the edge the task is about: `reconnect` alone could satisfy every
+    /// test above by blocking correctly and telling nobody why, which is the
+    /// state the app was already in. The screen needs the reason, and it can
+    /// only come out through the return value.
+    @Test("the host's description is handed back, not only acted on")
+    func reopenReturnsTheHostsDescription() async throws {
+        let session = Self.makeSession(status: .disconnected)
+        let repository = InMemorySessionRepository(sessions: [session])
+        let signedOut = AgentBackend(
+            id: "test-backend",
+            displayName: "Test",
+            capabilities: [.streaming],
+            availability: .unavailable(reason: "not_logged_in")
+        )
+        let service = Self.makeService(
+            transport: ProbeTransport(describing: .listed(signedOut)),
+            repository: repository
+        )
+
+        let (_, description) = await service.reopen(session, to: Self.makeBackend())
+
+        // The reason itself, not merely "unavailable": `not_logged_in` and a
+        // backend that is simply busy are different sentences, and a caller
+        // handed only a bool cannot tell them apart.
+        #expect(description.backend?.unavailableReason == "not_logged_in")
+    }
+
+    /// The backend's state is reported even for a session no probe may change.
+    ///
+    /// `.streaming` is not reconnectable, and an early return before the refresh
+    /// would report `.unknown` — "we could not ask" — about a Mac that answers
+    /// fine. That is the wrong-half naming this whole edge exists to stop, and
+    /// it would only show up on a screen open during a turn.
+    @Test("a session no probe may change still learns what the host said")
+    func nonReconnectableSessionStillGetsADescription() async throws {
+        let session = Self.makeSession(status: .streaming)
+        let repository = InMemorySessionRepository(sessions: [session])
+        let transport = ProbeTransport(describing: .absent)
+        let service = Self.makeService(transport: transport, repository: repository)
+
+        let (unchanged, description) = await service.reopen(session, to: Self.makeBackend())
+
+        #expect(unchanged.status == .streaming)
+        #expect(description == .absent)
+        // The probe is what must not fire: asking a host to reconsider a turn in
+        // flight is the request `isReconnectable` exists to prevent.
+        #expect(await transport.probeCount == 0)
     }
 }

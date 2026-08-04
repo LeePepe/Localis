@@ -220,19 +220,56 @@ public actor ChatService {
     /// rather than replacing it with an error screen. An unreachable host is
     /// already fully expressed by the status coming back unchanged.
     public func reconnect(_ session: Session, to backend: AgentBackend) async -> Session {
-        guard Self.isReconnectable(session.status) else { return session }
+        await reopen(session, to: backend).session
+    }
+
+    /// Reconnects, and also hands back what the host said about the backend (#41).
+    ///
+    /// **Why the description comes out of here rather than from a second call.**
+    /// The availability the screen needs is decoded from the same `/v1/models`
+    /// response this reconnect already depends on. Asking twice invites the two
+    /// answers to disagree — a sign-in landing between them — and the screen
+    /// would then render one while the composer acted on the other.
+    ///
+    /// **Why it is a separate method and `reconnect` stays.** Every caller that
+    /// only wants the session keeps the narrower signature, so nothing is forced
+    /// to name a value it does not use. That matters more than the duplication
+    /// saves: a caller handed a `BackendDescription` it has no wording for tends
+    /// to reduce it to a bool, which is how the value got lost the first time.
+    public func reopen(
+        _ session: Session,
+        to backend: AgentBackend
+    ) async -> (session: Session, description: BackendDescription) {
+        // Asked before the reconnectable check so the caller learns the
+        // backend's state even for a session no probe may change. A `.streaming`
+        // session on a signed-out agent is a real state, and returning
+        // `.unknown` for it would report "we could not ask" about a host that
+        // answers fine.
+        let description = await transport.refresh(backend)
+
+        guard Self.isReconnectable(session.status) else { return (session, description) }
         // The Mac being up is not enough. A backend the host lists but is not
         // signed into would let a session report as sendable and then fail at
-        // the far end — the accept-then-fail shape FR-053 rules out. Checked
-        // before the probe, so no request goes out for an answer already known.
-        guard backend.isAvailable else { return session }
+        // the far end — the accept-then-fail shape FR-053 rules out.
+        //
+        // Read off the description rather than off the `backend` argument. That
+        // argument came from storage, where both repositories flatten
+        // `availability` to `.available` on read, so checking it was checking a
+        // constant — the write-back gap #41 exists to close. `.absent` and
+        // `.unknown` are equally not green lights: one is a backend the Mac no
+        // longer has, the other is a Mac that did not answer.
+        guard case .listed(let live) = description, live.isAvailable else {
+            return (session, description)
+        }
         // Only `.reachable` reconnects. `.unknown` is not a green light: it
         // means no probe has established anything, and treating it as reachable
         // would be the accept-then-fail shape again, one layer up. The reason a
         // failure carries (#40) is for the host list to display; here the
         // question is binary, and collapsing it at the point of use keeps this
         // guard behaving exactly as it did when `probe` returned `Bool`.
-        guard await transport.probe(backend) == .reachable else { return session }
+        guard await transport.probe(backend) == .reachable else {
+            return (session, description)
+        }
 
         let reconnected = session.withStatus(.idle)
 
@@ -270,7 +307,7 @@ public actor ChatService {
         if case .error = session.status {
             try? await repository.save(reconnected)
         }
-        return reconnected
+        return (reconnected, description)
     }
 
     /// Which statuses a probe is allowed to change.

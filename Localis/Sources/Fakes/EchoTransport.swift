@@ -105,6 +105,16 @@ struct EchoTransport: AgentTransport {
     /// Always reachable — there is nothing to be unreachable.
     func probe(_ backend: AgentBackend) async -> HostReachability { .reachable }
 
+    /// Echoes the backend back unchanged, always available.
+    ///
+    /// There is no host to ask, so there is nothing that could be signed out.
+    /// `.listed` rather than `.unknown` deliberately: `.unknown` means "could
+    /// not ask", which would leave every milestone-A conversation reporting an
+    /// unreachable Mac when the fake is working exactly as intended.
+    func refresh(_ backend: AgentBackend) async -> BackendDescription {
+        .listed(backend)
+    }
+
     /// The canned reply, split into streamable pieces.
     ///
     /// Deliberately states what it is in its first words. If this text ever
