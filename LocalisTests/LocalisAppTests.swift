@@ -393,21 +393,30 @@ struct LocalisAppTests {
     ///
     /// **Why there is no sibling test for the *unavailable* backend**, which is
     /// `resolveBackend`'s other reason to block sending. It cannot be written
-    /// yet, and not because of a gap in the fixtures:
+    /// yet, and not because of a gap in the fixtures. Two layers, and the
+    /// second is the one that matters for whoever picks up #29:
     ///
-    /// - `StoredMapping.swift:117` deliberately does not persist
-    ///   `availability` — it answers "can the host route to this *right now*",
-    ///   which nothing on disk knows, and a stored `not_logged_in` would grey
-    ///   out a backend the user has since signed into. So a seeded
-    ///   `.unavailable` reads back `.available` and any such test would fail on
-    ///   its own fixture.
-    /// - The live refresh that *would* produce it does not exist:
-    ///   `grep -rn "models()" Localis/Sources/` finds nothing, so
-    ///   `SessionDetailView.swift:116`'s `match.isAvailable` cannot be false at
-    ///   all today. The "isn't signed in" sentence has no producer.
+    /// - **Nothing produces it.** `grep -rn "\.models(" Localis/Sources` is
+    ///   empty, so `SessionDetailView.swift:116`'s `match.isAvailable` cannot
+    ///   be false at all today. The "isn't signed in" sentence has no writer.
+    /// - **And the read path would erase it anyway.** Both repositories drop
+    ///   `availability` on the way out, deliberately: the SwiftData one by
+    ///   having no column for it (`StoredMapping.swift:117`), the in-memory one
+    ///   by an explicit `withAvailability(.available)`
+    ///   (`SessionRepository.swift:129`). It answers "can the host route to
+    ///   this *right now*", which nothing on disk knows, and a stored
+    ///   `not_logged_in` would grey out a backend the user has since signed
+    ///   into.
     ///
-    /// Tracked as #29 rather than papered over with a test that asserts a path
-    /// nothing can reach.
+    /// So wiring the live refresh is **not** sufficient on its own: as long as
+    /// the backend reaching the view came out of a repository, it arrives
+    /// `.available` regardless of what the host just said. Either the refresh
+    /// hands runtime availability to the model without a round trip through
+    /// storage, or that erase-on-read rule changes — and it is a rule the two
+    /// implementations were deliberately aligned on, so it is not a one-liner.
+    ///
+    /// Tracked as #29, both layers, rather than papered over with a test that
+    /// asserts a path nothing can reach.
     @Test("a loaded session with no backend has already said why it can't send")
     func loadedSessionWithoutBackendExplainsItself() async throws {
         let host = HostID()
