@@ -411,21 +411,19 @@ public actor BridgeClient: AgentTransport {
     ) async throws -> (HTTPResponseHead, AsyncThrowingStream<[UInt8], Error>) {
         do {
             return try await http.stream(request)
-        } catch let error as LocalisError {
-            throw error
         } catch {
-            // A socket-level failure. Reporting it as a bad response would send
-            // the user to look at the bridge instead of the network.
+            // `TransportFailure` decides, rather than a catch-all here, so this
+            // path and the pairing one cannot answer differently for the same
+            // failure. Answering `.unreachable` for everything reported a
+            // rejected certificate as a sleeping Mac, sending the user to check
+            // a router when their host was presenting an unpinned key (#34).
             //
-            // The category is deliberately coarse — the user gets one sentence
-            // and one action either way — but the cause travels with it (#34).
-            // Without that, a rejected certificate and a dead route are the
-            // same value by the time anyone reads a log, and they need opposite
-            // fixes; #32 was chased from the wrong end for exactly this reason.
-            //
-            // Only `domain` and `code` are taken. Neither is free text from the
-            // other end, which is the line — not "these look harmless".
-            throw LocalisError.unreachable(diagnostic: TransportDiagnostic(error))
+            // Whatever it cannot place stays `.unreachable`, and carries the
+            // OS's `domain` and `code` so the log can tell a dead route from a
+            // refused certificate even where the category cannot (#34). Only
+            // those two fields: neither is free text from the other end, which
+            // is the line — not "these look harmless".
+            throw TransportFailure.classify(error)
         }
     }
 

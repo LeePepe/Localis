@@ -26,40 +26,43 @@ struct TransportDiagnosticTests {
     /// The case #32 was misdiagnosed from. A pin mismatch reaching a caller as
     /// a bare "unreachable" sends whoever reads it to check the network, which
     /// is the one thing that is fine.
+    ///
+    /// Since #28 this is answered one level up: a refused certificate is its
+    /// own category, so it is distinguishable without reading a diagnostic at
+    /// all. That is the stronger form — a category the UI can act on, rather
+    /// than a number in a log — and this test asserts it in that form. The
+    /// diagnostic still matters for everything #28 cannot place, which the
+    /// tests below cover.
     @Test("a rejected certificate is distinguishable from a dead route")
     func certificateFailureIsNotBareUnreachable() async throws {
         let refused = NSError(domain: NSURLErrorDomain, code: NSURLErrorSecureConnectionFailed)
-        let http = StubStreamingHTTP(responses: [.failure(refused)])
+        let error = try await Self.error(from: refused)
 
-        do {
-            _ = try await Self.client(http).models()
-            Issue.record("expected the socket failure to surface")
-        } catch let error as LocalisError {
-            let diagnostic = try #require(
-                error.diagnostic,
-                "the underlying NSError's identity was discarded — the collapse #34 is about"
-            )
-            #expect(diagnostic.domain == NSURLErrorDomain)
-            #expect(diagnostic.code == NSURLErrorSecureConnectionFailed)
-        }
+        #expect(error == .certificatePinMismatch)
+        // The point of the whole exercise: the two now say different things to
+        // the user, so nobody is sent to check a router over a bad key.
+        #expect(error.userMessage != LocalisError.unreachable().userMessage)
     }
 
     /// Two different socket failures must not read as the same error. Asserting
     /// one code in isolation would pass against an implementation that
     /// hardcoded it, which is the failure mode a single positive case cannot
     /// see.
+    ///
+    /// Both codes here stay `.unreachable` on purpose: this is testing that the
+    /// *diagnostic* distinguishes failures the category deliberately does not.
     @Test("two different socket failures do not collapse into each other")
     func distinctFailuresStayDistinct() async throws {
         let first = try await Self.diagnostic(
             from: NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotFindHost)
         )
         let second = try await Self.diagnostic(
-            from: NSError(domain: NSURLErrorDomain, code: NSURLErrorSecureConnectionFailed)
+            from: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
         )
 
         #expect(first != second)
         #expect(first.code == NSURLErrorCannotFindHost)
-        #expect(second.code == NSURLErrorSecureConnectionFailed)
+        #expect(second.code == NSURLErrorTimedOut)
     }
 
     /// A non-`URLError` domain must survive too. Restricting the diagnostic to
@@ -85,11 +88,19 @@ struct TransportDiagnosticTests {
     /// Written against `String(describing:)` rather than against named fields:
     /// a field added later that happens to hold the path would pass a
     /// field-by-field check and fail this one.
+    ///
+    /// The code is `cannotFindHost`, not a certificate code. A certificate code
+    /// now classifies as `.certificatePinMismatch` (#28), which carries no
+    /// payload at all — so every assertion below would hold for the reason that
+    /// there is nothing to inspect, and this test would be green whatever the
+    /// diagnostic did with `userInfo`. The `#require` guards that: if this ever
+    /// stops landing on the carrying path, the test fails instead of passing
+    /// vacuously.
     @Test("nothing but domain and code rides out")
     func diagnosticCarriesNothingElse() async throws {
         let leaky = NSError(
             domain: NSURLErrorDomain,
-            code: NSURLErrorSecureConnectionFailed,
+            code: NSURLErrorCannotFindHost,
             userInfo: [
                 NSLocalizedDescriptionKey: "/Users/someone/Library/secret.pem is not trusted",
                 NSURLErrorFailingURLStringErrorKey: "https://someones-macbook.local:8443/v1/models",
@@ -100,7 +111,11 @@ struct TransportDiagnosticTests {
         do {
             _ = try await Self.client(http).models()
             Issue.record("expected the socket failure to surface")
-        } catch {
+        } catch let error as LocalisError {
+            try #require(
+                error.diagnostic != nil,
+                "this landed on a path that carries no diagnostic, so the assertions below would hold vacuously"
+            )
             let described = String(describing: error)
             #expect(described.contains("/Users") == false)
             #expect(described.contains("secret") == false)
@@ -117,11 +132,11 @@ struct TransportDiagnosticTests {
     @Test("the diagnostic never reaches the user-facing wording")
     func diagnosticIsNotUserFacing() async throws {
         let diagnosed = try await Self.error(
-            from: NSError(domain: NSURLErrorDomain, code: NSURLErrorSecureConnectionFailed)
+            from: NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotFindHost)
         )
 
         #expect(diagnosed.userMessage == LocalisError.unreachable().userMessage)
-        #expect(diagnosed.userMessage.contains("\(NSURLErrorSecureConnectionFailed)") == false)
+        #expect(diagnosed.userMessage.contains("\(NSURLErrorCannotFindHost)") == false)
         #expect(diagnosed.userMessage.contains("NSURLError") == false)
     }
 
