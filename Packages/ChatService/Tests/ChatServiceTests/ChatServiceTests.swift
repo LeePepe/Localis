@@ -1233,3 +1233,153 @@ struct ChatServiceProjectionTests {
         #expect(!settled.isEmpty)
     }
 }
+
+/// The other half of #28: real activity **must** still move the row.
+///
+/// #28 removed the timestamp from `Session.withStatus`, on the argument that
+/// every genuine-activity path already advances `updatedAt` on the line before
+/// — `appending` when the turn is sent, `replacing` on each streamed chunk. If
+/// that argument is wrong anywhere, the fix does not merely stop spurious
+/// reordering, it stops *all* reordering: replies arrive and the list never
+/// moves. Nothing errors either way, so only a test tells the two apart.
+///
+/// **The argument was read off the code, and it does not cover every path with
+/// the same force.** Two of the three status writes are chained onto a
+/// `replacing` in the same statement, which is self-evident. The third
+/// (`current = current.withStatus(.idle)` after the loop) is not: on a stream
+/// that yields zero chunks the loop body never runs, so *that* `replacing`
+/// never happens, and what has to carry `updatedAt` is the `appending` from
+/// before the request was even sent. Same conclusion, different reason — so it
+/// gets measured rather than argued.
+///
+/// **Every clock here moves.** The suites above pin `now` to `t0`, which makes
+/// this class of assertion unfalsifiable: re-saving a fixture at its own
+/// `updatedAt` leaves the stored value identical whether the write advanced it
+/// or not, so both implementations pass. A test about whether a field was
+/// written has to be able to see the write.
+@Suite("Real activity still reorders the list (#28)")
+struct ChatServiceActivityTimestampTests {
+    private static let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+    /// What the clock reads once the turn is under way.
+    private static let tActive = Date(timeIntervalSince1970: 1_700_005_555)
+    private static let hostID = HostID()
+
+    private static func makeBackend() -> AgentBackend {
+        AgentBackend(id: "test-backend", displayName: "Test", capabilities: [.streaming])
+    }
+
+    private static func makeSession() -> Session {
+        Session(
+            id: UUID(),
+            hostID: hostID,
+            backendID: "test-backend",
+            title: "Yesterday's conversation",
+            createdAt: t0,
+            updatedAt: t0
+        )
+    }
+
+    /// A clock reading `tActive` for every call.
+    ///
+    /// Constant, not incrementing, on purpose: the question is only whether the
+    /// stored `updatedAt` ends up at activity time or stays at the fixture's
+    /// `t0`, and a moving value would make the expected result depend on how
+    /// many times the implementation happens to call `now()`.
+    private static func makeService(
+        transport: ScriptedTransport,
+        repository: InMemorySessionRepository
+    ) -> ChatService {
+        ChatService(transport: transport, repository: repository, now: { tActive })
+    }
+
+    private static func drain(_ stream: AsyncThrowingStream<Session, any Error>) async {
+        // The turn's writes happen inside the stream's task. Returning before
+        // it finishes would assert on the store mid-flight.
+        do {
+            for try await _ in stream {}
+        } catch {
+            // A turn that dies is one of the cases under test; the assertions
+            // are about what the store holds afterwards, not about the throw.
+        }
+    }
+
+    @Test("a normal reply moves the conversation to the top")
+    func streamedReplyAdvancesUpdatedAt() async throws {
+        // The main path, and the control for the two below: if this one fails
+        // the fix broke ordering outright.
+        let session = Self.makeSession()
+        let repository = InMemorySessionRepository(sessions: [session])
+        let service = Self.makeService(
+            transport: ScriptedTransport(text: ["Hel", "lo"]),
+            repository: repository
+        )
+
+        await Self.drain(try await service.send(prompt: "hi", in: session, to: Self.makeBackend()))
+
+        let stored = try #require(try await repository.session(id: session.id))
+        #expect(stored.updatedAt == Self.tActive)
+    }
+
+    @Test("a reply with no chunks at all still moves the conversation")
+    func emptyStreamStillAdvancesUpdatedAt() async throws {
+        // **The path the #28 argument did not actually cover.**
+        //
+        // Zero events means the `for await` body never executes, so the
+        // `replacing(at: now())` inside the loop — the thing that carries
+        // `updatedAt` on every other turn — does not happen. The status write
+        // after the loop no longer carries a timestamp, so if nothing else did,
+        // this session's row would sit at `t0` forever: a turn that ran and
+        // left no trace in the ordering.
+        //
+        // **What actually saves it is not what reading the code suggested.**
+        // The obvious answer is the two `appending(at: now())` calls in `send`,
+        // which persist before the request goes out. Mutating both of those to
+        // stop advancing the clock leaves this test green. The load is carried
+        // by a third site: the `replacing(assistant, at: now())` in the
+        // `if assistant.status == .streaming` branch *after* the loop
+        // (`ChatService.swift:165`), which fires precisely because a zero-chunk
+        // stream leaves the placeholder still `.streaming`. Easy to read as
+        // being inside the loop; it is not.
+        //
+        // So the path is triply redundant, and mutating any one or two of the
+        // three sites leaves this assertion green. Recorded because that is the
+        // shape that makes a partial revert look like a working fix — the code
+        // still behaves, so the test gets blamed for being a false green. All
+        // three at once: red, with the stored value pinned at `t0`. The reverse
+        // probe (asserting `t0` against the real code) is red too, so this
+        // assertion does see the value rather than passing vacuously.
+        let session = Self.makeSession()
+        let repository = InMemorySessionRepository(sessions: [session])
+        let service = Self.makeService(
+            transport: ScriptedTransport(events: []),
+            repository: repository
+        )
+
+        await Self.drain(try await service.send(prompt: "hi", in: session, to: Self.makeBackend()))
+
+        let stored = try #require(try await repository.session(id: session.id))
+        #expect(stored.updatedAt == Self.tActive)
+        // And the turn really did settle — otherwise this could pass on an
+        // implementation that threw before writing anything meaningful.
+        #expect(stored.messages.count == 2)
+    }
+
+    @Test("a turn that dies mid-stream still moves the conversation")
+    func failedTurnAdvancesUpdatedAt() async throws {
+        // The `catch` path (`:184`). A failed turn is still activity — the user
+        // sent something and got a partial answer, and burying that row under
+        // conversations that did nothing since is the opposite of the ordering
+        // #28 exists to protect.
+        let session = Self.makeSession()
+        let repository = InMemorySessionRepository(sessions: [session])
+        let service = Self.makeService(
+            transport: ScriptedTransport(text: ["par"], failure: LocalisError.unreachable),
+            repository: repository
+        )
+
+        await Self.drain(try await service.send(prompt: "hi", in: session, to: Self.makeBackend()))
+
+        let stored = try #require(try await repository.session(id: session.id))
+        #expect(stored.updatedAt == Self.tActive)
+    }
+}
