@@ -1004,6 +1004,28 @@ testflight → Run workflow with `force=true`.
   one, use timing (one second apart is not a human decision), `commit_id` on
   the timeline event, and whether the two changes have any files in common.
 
+  That rule is written for *reading* history, and it has a second half for
+  *starting work*: **before claiming a task, confirm its owner is you.** Task
+  #48 was built twice — store opened a pull request and found, while looking up
+  a name, that core had opened one two hours earlier. Both had written
+  `HostProbing`, `BridgeHostProbe` and the probe channel in `HostListModel`
+  from scratch; the filenames collided, so merging either would have conflicted
+  the other. Store's account: the task read `in_progress`, and **`in_progress`
+  was read as "I am doing it"** — the status says work has started, never by
+  whom. Team-lead's: the task was dispatched without checking whether anyone
+  already held it.
+
+  **The signal is not in one place, which is why "just check first" is not a
+  usable instruction.** `gh pr list` would not have helped — core had no pull
+  request yet when store started. What existed was a remote branch, and before
+  that only a message. So: read `git branch -r` for a branch named after the
+  task, read the task's `owner`, and read recent messages for someone saying
+  they had taken it. **If `owner` is empty or is someone else, ask before
+  writing code** — one message costs less than two implementations, and this is
+  the one check the author field cannot do for you. When you do start, write
+  your name into `owner` and your branch name into the task, so the next person
+  gets an answer instead of an inference.
+
 - **When a comment cites a task number, say what that task promises.** Task
   numbers are local, so nothing validates a reference to one — not the
   compiler, not CI, not the task tool. A comment reading "#30 tracks giving
