@@ -177,6 +177,46 @@ struct ChatServiceReconnectTests {
         #expect(stored.updatedAt == Self.t0)
     }
 
+    @Test("recovering a failed conversation does not move it up the list either")
+    func recoveringDoesNotTouchTheRowsPosition() async throws {
+        // The half `reconnectingDisconnectedDoesNotTouchTheRow` does not cover.
+        //
+        // That test protects the sessions whose save was *skipped*. This one is
+        // about the one case that still writes — and it is the same bug, not a
+        // different one: the user opens a conversation that failed yesterday,
+        // the probe succeeds, `.error` is replaced, and the row jumps to the
+        // top of the list. Nothing arrived. On screen that is indistinguishable
+        // from a reply having come in.
+        //
+        // The write itself is not the defect and must stay: without it a failed
+        // session reads back failed forever (`recoveringClearsTheStoredError`).
+        // What was wrong is that "persist the recovered status" and "declare
+        // new activity" were one operation, because `withStatus` took a
+        // timestamp at all. Splitting them is the fix; this asserts the split.
+        //
+        // Clock moved off `t0` for the reason `t1` exists: at the default the
+        // row would be rewritten to the value it already held and this would
+        // pass against the unfixed code too.
+        let session = Self.makeSession(status: .error(.connectionLost))
+        let repository = InMemorySessionRepository(sessions: [session])
+        let service = Self.makeService(
+            transport: ProbeTransport(answer: true),
+            repository: repository,
+            now: { Self.t1 }
+        )
+
+        _ = await service.reconnect(session, to: Self.makeBackend())
+
+        let stored = try #require(try await repository.session(id: session.id))
+        // Both halves, in one test on purpose. Asserting only the timestamp
+        // would go green on an implementation that stopped saving altogether —
+        // which trades this bug for the permanent-failure deadlock #25 closed.
+        // The status must be the recovered one *and* the row must not have
+        // moved; either alone is satisfiable by a regression.
+        #expect(stored.status == .disconnected)
+        #expect(stored.updatedAt == Self.t0)
+    }
+
     @Test("a recovered session no longer reads back as failed")
     func recoveringClearsTheStoredError() async throws {
         // What persisting *does* buy, and the reason `reconnect` writes at all.

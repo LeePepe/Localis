@@ -138,7 +138,7 @@ public actor ChatService {
                             assistant = settled
                             current = current
                                 .replacing(assistant, at: now())
-                                .withStatus(Self.sessionStatus(for: end), at: now())
+                                .withStatus(Self.sessionStatus(for: end))
                             try? await repository.save(current)
                             continuation.yield(current)
                             continuation.finish()
@@ -169,7 +169,7 @@ public actor ChatService {
                     // conversation broken for good: `canSend` stays false and
                     // the composer refuses input on a session that works
                     // (FR-053).
-                    current = current.withStatus(.idle, at: now())
+                    current = current.withStatus(.idle)
                     try await repository.save(current)
                     continuation.yield(current)
                 } catch {
@@ -181,10 +181,7 @@ public actor ChatService {
                     assistant = assistant.withStatus(settled)
                     current = current
                         .replacing(assistant, at: now())
-                        .withStatus(
-                            Self.sessionStatus(for: settled, reason: reason),
-                            at: now()
-                        )
+                        .withStatus(Self.sessionStatus(for: settled, reason: reason))
                     try? await repository.save(current)
                     continuation.yield(current)
                 }
@@ -231,7 +228,7 @@ public actor ChatService {
         guard backend.isAvailable else { return session }
         guard await transport.probe(backend) else { return session }
 
-        let reconnected = session.withStatus(.idle, at: now())
+        let reconnected = session.withStatus(.idle)
 
         // Persisted only when the previous status was one a read gives back.
         //
@@ -239,20 +236,27 @@ public actor ChatService {
         // and collapses `.idle/.disconnected/.connecting/.streaming` to
         // `.disconnected`. So from `.disconnected` or `.connecting` this write
         // stores a status that the very next read turns back into what was
-        // already there — it cannot change any later answer.
-        //
-        // It is not merely wasted, which is why this is a guard and not a
-        // tidy-up: `withStatus` bumps `updatedAt` (Session.swift:96), and both
-        // repositories sort the list by `updatedAt` descending
-        // (SwiftDataSessionRepository.swift:46). Writing here would push a
-        // conversation to the top of the list because the user *opened* it,
-        // which on screen is indistinguishable from it having new activity.
+        // already there — it cannot change any later answer, and the guard
+        // keeps a pointless write off the disk on every screen open.
         //
         // From `.error` the write is the point. That one does survive a read,
         // so a session left failed comes back failed on every launch, forever,
         // with `canSend` false and no turn permitted to clear it. Replacing it
         // makes the next read `.disconnected` — still not sendable, but a state
         // this same call can lift.
+        //
+        // **This guard used to carry a second job that it no longer has to.**
+        // `withStatus` took a timestamp and bumped `updatedAt`, which is the
+        // list's sort key, so any save here pushed a conversation to the top
+        // because the user *opened* it — indistinguishable on screen from a
+        // reply arriving. Skipping the write avoided that for two of the three
+        // statuses and did nothing for `.error`, which still jumped the queue
+        // every time a failed conversation recovered. That is fixed where it
+        // was actually caused: `withStatus` no longer touches `updatedAt` at
+        // all (#28, Session.swift), so a save here is now just a save. Both
+        // halves are pinned by `ChatServiceReconnectTests` —
+        // `reconnectingDisconnectedDoesNotTouchTheRow` for the skipped write,
+        // `recoveringDoesNotTouchTheRowsPosition` for the one that happens.
         //
         // `try?`: the reconnect succeeded, and a store that could not record it
         // must not turn a working link into a closed composer. The in-memory
