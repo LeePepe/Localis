@@ -39,10 +39,51 @@ fi
 if true; then
   STAGED_SWIFT=$(echo "$STAGED" | grep -E '\.swift$' || true)
   if [ -n "$STAGED_SWIFT" ]; then
+    # The `excluded:` list is read from `.swiftlint.yml` rather than repeated
+    # here. A second copy would be a second source of truth that drifts
+    # silently: someone adds a path to the config, the hook keeps linting it,
+    # and the two gates disagree again — which is the failure `--force-exclude`
+    # was added to fix.
+    EXCLUDED_GLOBS=()
+    while IFS= read -r glob; do
+      [ -n "$glob" ] && EXCLUDED_GLOBS+=("$glob")
+    done < <(sed -n '/^excluded:/,/^[^ -]/p' .swiftlint.yml \
+             | sed -n 's/^[[:space:]]*-[[:space:]]*//p')
+
     LINT_ARGS=()
     while IFS= read -r file; do
-      [ -f "$file" ] && LINT_ARGS+=("$file")
+      [ -f "$file" ] || continue
+      skip=""
+      for glob in "${EXCLUDED_GLOBS[@]}"; do
+        # shellcheck disable=SC2053  # the glob is meant to be a pattern
+        case "$file" in $glob|$glob/*) skip=1; break ;; esac
+      done
+      [ -n "$skip" ] || LINT_ARGS+=("$file")
     done <<< "$STAGED_SWIFT"
+
+    # **An empty set is "nothing to judge", not "judged and failed."**
+    #
+    # Without this branch, a commit touching only test files reached swiftlint
+    # with a path list that `--force-exclude` then emptied. swiftlint treats
+    # that as an error — `No lintable files found at paths: ...`, exit 1 — and
+    # the hook read the exit code as a lint failure and aborted. Measured with
+    # a positive control: one excluded test file gives rc=1, one non-excluded
+    # source file gives rc=0.
+    #
+    # The consequence was worse than the false alarm. Every test-only commit
+    # was blocked, and the only way past a hook is `--no-verify`, which
+    # disables the per-layer build/test, the wiring self-test and the
+    # frontmatter check as well — everything except the gate that misfired.
+    #
+    # Deliberately not implemented by matching the string `No lintable files`:
+    # swiftlint is free to reword it, and the failure that rewording produces
+    # is a hook that treats real violations as an empty set. Filtering first
+    # means the empty case is decided here, from the config, before swiftlint
+    # is asked anything.
+    if [ ${#LINT_ARGS[@]} -eq 0 ]; then
+      echo "[pre-commit] ℹ️  lint skipped: every staged .swift file is in .swiftlint.yml's excluded list"
+    fi
+
     if [ ${#LINT_ARGS[@]} -gt 0 ]; then
       # `--force-exclude` is not optional here, and it is not a loosening.
       #

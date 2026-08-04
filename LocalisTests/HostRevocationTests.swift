@@ -343,6 +343,15 @@ struct HostRevocationTests {
             throw error
         }
 
-        func probe(_ backend: AgentBackend) async -> Bool { false }
+        /// Reports the same error the turn would have thrown (#40).
+        ///
+        /// Not a hardcoded `.unreachable(reason: .offline)`: this stub is
+        /// constructed with the error it refuses on, and a probe that named a
+        /// different cause than `send` would make the fake internally
+        /// inconsistent — a revocation test whose probe says "offline" is
+        /// describing a situation that cannot occur.
+        func probe(_ backend: AgentBackend) async -> HostReachability {
+            HostReachability(failure: error)
+        }
     }
 }
