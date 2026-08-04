@@ -205,15 +205,30 @@ private final class HTTPRequestHandler: ChannelInboundHandler, @unchecked Sendab
             } else {
                 response = await handler.respond(to: request)
             }
-            await Self.write(response, to: channel, keepAlive: keepAlive)
+            await Self.write(response, to: channel, keepAlive: keepAlive, request: request)
         }
     }
 
+    /// Writes the response and records one log line for it.
+    ///
+    /// **Logged here rather than at each `case`** because this is the one place
+    /// every response passes through with its status already decided. Logging
+    /// inside the handler would miss the ones the server itself produces (413),
+    /// and logging per branch is how a route ends up silently unlogged — the
+    /// same argument that puts auth on `Route.requiresAuthentication`.
+    ///
+    /// The line goes out *before* the body: a stream can take a whole turn to
+    /// finish, and a log that only recorded completed responses could not answer
+    /// "did my request arrive?" for a request still in flight — which is exactly
+    /// the question it was added to answer.
     private static func write(
         _ response: BridgeResponse,
         to channel: Channel,
-        keepAlive: Bool
+        keepAlive: Bool,
+        request: BridgeRequest
     ) async {
+        RequestLog.request(method: request.method, route: request.route, status: response.status)
+
         switch response {
         case .complete(let status, let headers, let body):
             await writeComplete(status: status, headers: headers, body: body, to: channel, keepAlive: keepAlive)
@@ -311,8 +326,17 @@ private final class HTTPRequestHandler: ChannelInboundHandler, @unchecked Sendab
     func errorCaught(context: ChannelHandlerContext, error: any Error) {
         // Includes TLS handshake failures, which are routine here: a phone that
         // has not paired, or whose pin no longer matches, fails exactly this
-        // way. Nothing is logged — the peer address and handshake details are
-        // not ours to record (constitution §I) — and the channel closes.
+        // way.
+        //
+        // **The fact is logged; nothing identifying is.** No peer address, no
+        // handshake detail, no error text — those are not ours to record
+        // (constitution §I). Logging nothing at all was the earlier choice and
+        // it was wrong for a reason worth keeping: a pinning mismatch then
+        // produced *no evidence anywhere*, so "the client never connected" and
+        // "the client connected and I rejected it" were the same observation.
+        // The two have opposite fixes, and during integration that ambiguity
+        // cost a wrong diagnosis.
+        RequestLog.tlsHandshakeFailed()
         context.close(promise: nil)
     }
 }

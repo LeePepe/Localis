@@ -60,6 +60,17 @@ public enum BridgeResponse: Sendable {
     /// whose id shows up only at the end is a turn that cannot be resumed.
     case stream(status: Int, headers: [String: String] = [:], events: BridgeEventStream)
 
+    /// The status this response carries, whichever shape it is.
+    ///
+    /// Both cases have one; without this the log would have to switch on the
+    /// shape, and could report a stream's status only once the turn had ended.
+    public var status: Int {
+        switch self {
+        case .complete(let status, _, _): status
+        case .stream(let status, _, _): status
+        }
+    }
+
     public static func json(
         status: Int,
         headers: [String: String] = [:],
