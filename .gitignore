@@ -50,3 +50,4 @@ AppStore_*.mobileprovision
 # device names / UDIDs — not shipped). The .example template IS committed.
 local/*
 !local/signing.env.example
+.mutation-broken.log

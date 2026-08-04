@@ -1,6 +1,7 @@
 import Foundation
 import LocalisModels
 import SessionStore
+import TransportKit
 
 /// Writes a small transcript into the real store, for screenshots only.
 ///
@@ -52,6 +53,16 @@ enum DemoSeed {
     static func populateIfEmpty(_ repository: any SessionRepository) async {
         do {
             guard try await repository.allSessions().isEmpty else { return }
+            let credentials = HostCredentialStore()
+            for host in hostFixtures() {
+                try await repository.save(host)
+                // The pin goes to the Keychain, not into the record — the same
+                // split the real pairing flow makes, and the only way a seeded
+                // machine can come back connectable.
+                if let pin = host.pinnedSPKI {
+                    try credentials.savePin(pin, for: host.id)
+                }
+            }
             for (host, backend, session) in fixtures() {
                 try await repository.save(backend, on: host)
                 try await repository.create(session)
@@ -61,6 +72,42 @@ enum DemoSeed {
             // leaves the app on its real empty state — which is a true thing to
             // show — whereas crashing would lose the very screen we came for.
         }
+    }
+
+    /// Two machines in different pairing states.
+    ///
+    /// Written through `save(_ host:)` like everything else here, so the
+    /// screenshot shows hosts that genuinely came back off disk through
+    /// `hosts()`. Handing `RootView` a hardcoded array would photograph the
+    /// strip rather than the persistence, and persistence is the whole of B-1.
+    ///
+    /// **The pin on "Studio" does not go into the store, and that is the
+    /// point.** `SessionStore` has no pin column — the Keychain is the only
+    /// owner of a trust anchor — so `save(_ host:)` drops it, and
+    /// `populateIfEmpty` writes it to the Keychain separately. A machine that
+    /// comes back connectable therefore proves the two halves were rejoined on
+    /// read (`HostAssembly`); it cannot be produced by the store alone.
+    ///
+    /// That is also why the two fixtures differ in more than wording: "Studio"
+    /// exercises the join, "MacBook Air" has no pin at all, so a screenshot in
+    /// which both pills look alike means the join is not running.
+    private static func hostFixtures() -> [LocalisHost] {
+        [
+            LocalisHost(
+                id: HostID(),
+                displayName: "Studio",
+                endpoint: HostEndpoint(host: "studio.local", port: 8443),
+                bridgeID: "bridge-studio",
+                pinnedSPKI: SPKIHash(base64: "AAA="),
+                pairingState: .paired
+            ),
+            LocalisHost(
+                id: HostID(),
+                displayName: "MacBook Air",
+                endpoint: HostEndpoint(host: "air.local", port: 8443),
+                bridgeID: "bridge-air"
+            )
+        ]
     }
 
     /// Two hosts whose backends share the id `claude`.

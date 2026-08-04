@@ -18,6 +18,13 @@ struct RootView: View {
     private let storeError: String?
 
     @State private var model: SessionListModel?
+    /// The machines on file, loaded at launch.
+    ///
+    /// Held here rather than inside the list screen because it is launch state:
+    /// "which Macs do I have" is answered once from disk and is what makes a
+    /// relaunch show the same machines. A model built inside a screen would
+    /// answer it only when that screen happened to be visited.
+    @State private var hosts: HostListModel?
     /// Explicit path so a screenshot run can push the same value a tap pushes.
     @State private var path = NavigationPath()
 
@@ -62,6 +69,13 @@ struct RootView: View {
             let model = model ?? SessionListModel(repository: repository)
             self.model = model
             await model.load()
+            // The machines recovered from disk (FR-026). Loaded at launch and
+            // shown above the sessions, because an empty session list with a
+            // paired Mac on screen is a different, true statement from an empty
+            // screen — and until this ran, the app forgot every Mac on quit.
+            let hosts = hosts ?? HostListModel(repository: repository)
+            self.hosts = hosts
+            await hosts.load()
             // Same value a tapped row pushes, so this arrives at the transcript
             // through `navigationDestination` rather than beside it.
             if DemoSeed.opensFirstSession, let first = model.rows.first {
@@ -88,8 +102,56 @@ struct RootView: View {
                         .padding(.horizontal, Space.cardPadding)
                         .padding(.bottom, 8)
                 }
+                if let hosts {
+                    hostStrip(hosts)
+                }
                 SessionListView(rows: model.rows)
             }
+        }
+    }
+
+    /// The machines on file, above the sessions.
+    ///
+    /// **This strip is the visible half of B-1.** A `hosts()` call whose answer
+    /// never reaches a pixel is indistinguishable from no call at all — the
+    /// store round-trips, every test is green, and the user sees nothing. So
+    /// the acceptance test for host persistence is this view showing a Mac
+    /// after a cold start, not a passing suite.
+    ///
+    /// Deliberately not a whole screen yet: pairing has no UI (B-2), so a row
+    /// here can be looked at and not tapped. A row that navigated somewhere
+    /// unbuilt would be a worse lie than a row that admits it is not paired.
+    @ViewBuilder
+    private func hostStrip(_ hosts: HostListModel) -> some View {
+        if let loadError = hosts.loadError {
+            // Read failure is stated, never rendered as "no machines" — see
+            // `HostListModel.load`.
+            StatusPill(loadError, tone: .danger)
+                .padding(.horizontal, Space.cardPadding)
+                .padding(.bottom, 8)
+        } else if !hosts.rows.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Space.gap) {
+                    ForEach(hosts.rows) { row in
+                        CardInner {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(row.title)
+                                    .font(TypeScale.title)
+                                    .lineLimit(1)
+                                Text(row.subtitle)
+                                    .font(TypeScale.body)
+                                    .lineLimit(1)
+                                StatusPill(
+                                    row.status,
+                                    tone: row.isConnectable ? .primary : .neutral
+                                )
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, Space.cardPadding)
+            }
+            .padding(.bottom, 8)
         }
     }
 }
