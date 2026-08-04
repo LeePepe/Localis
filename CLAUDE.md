@@ -55,6 +55,31 @@ meant to produce evidence (a screenshot, a green test), also use a fresh
 "this run built nothing" and "this run built successfully" are otherwise
 indistinguishable on disk.
 
+### Reading CI logs while a run is still going
+
+```bash
+gh api repos/LeePepe/Localis/actions/jobs/<job-id>/logs   # works mid-run
+gh run view --log --job <job-id>                          # needs the whole run to finish
+```
+
+The second one answers `run ... is still in progress; logs will be available
+when it is complete`. That is a statement about the tool, not about the logs —
+they exist, and the first command returns them. Do not read it as "the failure
+left no trace" and start guessing from the job's duration instead.
+
+Duration is a bad proxy in general here: a failing job that took 40s sounds like
+it died before reaching the tests, but the SessionStore suite runs 132 tests in
+**0.459s** — those 40 seconds were almost entirely compilation. Read the log.
+
+### `git reset --hard` and untracked files
+
+`--hard` leaves untracked files alone but discards local edits to **tracked**
+ones. Half of that rule ("untracked survives") is the memorable half, and it is
+the half that gets you: an edit to something like `scripts/hooks/pre-commit`
+disappears silently, and a hook that lost a gate does not error — it just stops
+stopping things. After a reset, grep for the change you expect to still be
+there.
+
 ## Non-negotiables
 
 - Dependencies point down only, on both axes (packages via `depends_on`, class
