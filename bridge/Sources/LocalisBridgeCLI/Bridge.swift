@@ -86,11 +86,22 @@ struct Bridge {
 
         let runners: [any TurnRunning] = claudePath.map { [ClaudeBackend(executable: $0)] } ?? []
 
+        // Which CLI conversation each session belongs to, across restarts. In
+        // memory this failed silently: a restart lost the mapping, the next turn
+        // started a fresh CLI conversation, and the user saw a model that had
+        // forgotten the last hour with nothing to point at.
+        //
+        // Resets on a corrupt file rather than throwing, unlike `tokens` above.
+        // The asymmetry is deliberate: losing grants unpairs the machine, losing
+        // sessions costs one fresh conversation — which is what every restart
+        // used to cost anyway.
+        let sessions = try SessionStore(directory: home)
+
         let handler = BridgeHandler(
             catalog: catalog,
             runners: runners,
             tokens: tokens,
-            coordinator: TurnCoordinator(sessions: SessionStore()),
+            coordinator: TurnCoordinator(sessions: sessions),
             bridgeName: machineName,
             bridgeID: instanceID
         )
