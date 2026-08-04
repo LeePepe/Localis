@@ -22,6 +22,10 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.5.0"),
+        // Already present transitively via swift-certificates, but declared
+        // directly because BridgeCore imports it directly — an undeclared
+        // transitive import breaks the day the intermediary stops needing it.
+        .package(url: "https://github.com/apple/swift-asn1.git", from: "1.1.0"),
     ],
     targets: [
         // The protocol surface: wire encoding, routing, SSE. Knows nothing
@@ -35,6 +39,9 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "X509", package: "swift-certificates"),
+                // The SPKI pin is assembled from DER bytes by hand, because it
+                // has to match a hash the iOS side builds the same way.
+                .product(name: "SwiftASN1", package: "swift-asn1"),
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
