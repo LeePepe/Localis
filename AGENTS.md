@@ -134,6 +134,7 @@ Instances we actually hit, so you can recognise the family:
 | A green wiring check | Its filter matched nothing (`comm -23` against an empty file) |
 | `exit 0` from `xcodebuild` | Destination matched no device; nothing compiled, and a stale `.app` was still on disk |
 | `swiftlint` reporting no violations | `swiftlint` was not on `PATH`; the hook skipped its only gate in silence |
+| `swiftlint --strict` clean on a test file | `.swiftlint.yml` excludes every test directory — a planted force-unwrap gave the same `rc=0` and the same empty output |
 | `Test run with 0 tests` | `--filter` matched nothing, and the runner exits 0 for that |
 | A green test named for a rule | It asserted the rule's *neighbour*; mutating the rule left it green |
 | `142 started / 1 passed` | The "1 passed" was an empty XCTest shell; the real suite crashed before finishing |
@@ -800,6 +801,19 @@ git config core.hooksPath scripts/hooks
 **incremental** `swift build && swift test` for each touched `Packages/<X>` (and
 runs `scripts/check-frontmatter.sh` when any `tech-context.md` changed). Layers
 you didn't touch are not built.
+
+**SwiftLint never sees test code.** `.swiftlint.yml` excludes `LocalisTests` and
+`Packages/*/Tests`, so linting a test file is green by construction — and the
+hook reports that as `lint skipped`, which is accurate but easy to read as
+"nothing to complain about." Someone relied on the sentence above this one,
+ran `swiftlint --strict` against a new test file, got `rc=0` with no output,
+and reported it clean; a deliberate force-unwrap planted in the same file
+produced the identical result. **For a change that lives in tests, the lint
+step is silent by design and the guarantees have to come from the tests.**
+
+The table above already has a row for `swiftlint` missing from `PATH`. This is
+the same output with a different cause, and unlike the `PATH` case it is not
+intermittent: it applies every time anyone touches a test.
 
 ## TestFlight
 
