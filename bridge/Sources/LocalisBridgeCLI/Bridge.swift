@@ -39,6 +39,12 @@ struct Bridge {
         let instanceID = try BridgeInstanceID.loadOrCreate(in: home)
 
         let claudePath = resolveClaude()
+
+        // Read once and used for both the pairing response and the Bonjour
+        // advertisement. Two lookups would let the two disagree, and the client
+        // matches on what it heard first.
+        let machineName = Host.current().localizedName ?? "Mac"
+
         let catalog = BackendCatalog(
             backends: [ClaudeBackend.descriptor(executable: claudePath)],
             // Explicitly false: a turn does not yet survive a disconnect, and
@@ -53,13 +59,29 @@ struct Bridge {
             runners: runners,
             tokens: TokenStore(),
             coordinator: TurnCoordinator(sessions: SessionStore()),
-            bridgeName: Host.current().localizedName ?? "Mac",
+            bridgeName: machineName,
             bridgeID: instanceID
         )
 
         let server = BridgeServer(identity: identity, handler: handler)
         let bound = try await server.start(port: port)
         let code = await handler.openPairing()
+
+        // Advertised only after the listener is up. Announcing first opens a
+        // window where a phone can find the service and fail to connect to it,
+        // which reads to the user as a broken bridge rather than a slow one.
+        //
+        // A failure here is reported and survived, not fatal: manual address
+        // entry exists precisely for networks that carry no multicast (VPNs,
+        // guest Wi-Fi), and refusing to run would take away the workaround
+        // along with the feature.
+        let advertiser = BonjourAdvertiser()
+        var discovery = "advertising \(BonjourAdvertiser.serviceType)"
+        do {
+            try advertiser.start(port: bound, name: machineName, instanceID: instanceID)
+        } catch {
+            discovery = "not advertising — enter the address by hand"
+        }
 
         // Written to the file handle rather than `print`ed. `print` goes
         // through a libc stream that is *block*-buffered whenever stdout is not
@@ -74,6 +96,7 @@ struct Bridge {
           port            \(bound)
           pin             \(identity.spkiPin)
           instance        \(instanceID)
+          discovery       \(discovery)
           claude          \(claudePath == nil ? "not found — backend unavailable" : "found")
 
           pairing code    \(code)      (valid \(Int(PairingSession.lifetime))s)
