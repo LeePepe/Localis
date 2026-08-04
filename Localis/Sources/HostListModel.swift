@@ -43,7 +43,15 @@ final class HostListModel {
     /// FR-026's promise from the user's side.
     func load() async {
         do {
-            rows = try await assembly.hosts().map(HostRowState.init(host:))
+            // Written as a closure, not as `.map(HostRowState.init(host:))`.
+            // The unapplied form names the initialiser by its full signature, so
+            // it stopped resolving the moment `runtime:` was added — and the
+            // failure is a type-inference error at the call site rather than
+            // anything that mentions the new parameter.
+            //
+            // No runtime value is passed: nothing has probed these hosts, and
+            // the default says so (#41 supplies the live one).
+            rows = try await assembly.hosts().map { HostRowState(host: $0) }
             loadError = nil
         } catch {
             // Never an empty list on failure. "You have no Macs" and "we could
@@ -101,26 +109,77 @@ struct HostRowState: Identifiable, Equatable, Sendable {
     /// Where it answers, for the subtitle — the one thing that distinguishes two
     /// machines the user gave the same name.
     let subtitle: String
+    /// The **pairing relationship** — durable, and only a person can change it.
+    /// Never a probe result; see `unreachableDetail` for that half, and FR-061
+    /// for why the two must not be merged into one line.
     let status: String
     /// Whether the app may open a connection. Derived from `canConnect`, which
     /// requires paired **and** pinned: a row that offered to connect on the
     /// strength of the state alone would connect to an unpinned machine.
+    ///
+    /// Now also false while the last probe says the host is unreachable. The two
+    /// conditions are independent — a stored pairing says nothing about whether
+    /// the machine answered a moment ago.
     let isConnectable: Bool
+    /// What the last probe established. Not persisted, and `.unknown` until one
+    /// has actually run (Amendment C §4.2).
+    let runtime: HostRuntimeState
 
-    init(host: LocalisHost) {
+    /// Why this machine is unusable right now, or `nil` when nothing is known to
+    /// be wrong (FR-060).
+    ///
+    /// **`nil` covers two different situations on purpose.** A reachable host
+    /// and a never-probed one both produce no sentence, because in neither case
+    /// is there a failure to report. Rendering `.unknown` as a problem would put
+    /// "isn't answering" under every machine at launch — a claim no probe backs,
+    /// and one the user would have to disprove.
+    var unreachableDetail: String? {
+        switch runtime.reachability {
+        case .unreachable(let reason): reason.userMessage
+        case .reachable, .unknown: nil
+        }
+    }
+
+    /// Whether the last probe established that this host is not usable.
+    ///
+    /// Separate from `unreachableDetail != nil` in intent only: this one is for
+    /// deciding, that one is for showing.
+    var isUnreachable: Bool {
+        if case .unreachable = runtime.reachability { return true }
+        return false
+    }
+
+    /// - Parameter runtime: defaults to `.unknown` reachability, never
+    ///   `.reachable`. Every existing call site builds rows straight off disk
+    ///   with no probe behind them (#41 supplies the live one), and a default of
+    ///   `.reachable` would have all of them assert something nothing measured.
+    init(host: LocalisHost, runtime: HostRuntimeState = HostRuntimeState()) {
         id = host.id
         title = host.displayName
         subtitle = host.endpoint.displayText
-        status = Self.status(of: host.pairingState)
-        isConnectable = host.canConnect
+        status = Self.statusText(for: host.pairingState)
+        self.runtime = runtime
+        // Both halves must hold. `canConnect` answers "is this pairing good",
+        // reachability answers "did it answer" — a machine that just refused our
+        // certificate satisfies the first and fails the second.
+        if case .unreachable = runtime.reachability {
+            isConnectable = false
+        } else {
+            isConnectable = host.canConnect
+        }
     }
 
-    /// Wording per state.
+    /// Wording per pairing state.
     ///
     /// Exhaustive with no `default`, deliberately: a new state must come here
     /// and be given words, rather than silently inheriting whatever the last
     /// case said.
-    private static func status(of state: HostPairingState) -> String {
+    ///
+    /// Not private, so a test can assert *which state* a row reports without
+    /// restating the sentence. Pinning FR-061 to the literal text would mean a
+    /// copy-edit breaks a rule about state selection, and whoever fixed it would
+    /// paste the new wording rather than ask what the test was for.
+    static func statusText(for state: HostPairingState) -> String {
         switch state {
         case .discovered: "Not paired"
         case .pairing: "Pairing…"
@@ -129,6 +188,17 @@ struct HostRowState: Identifiable, Equatable, Sendable {
         // Named as a problem, not as an error code. This is the state the user
         // must act on, and it must never read as something a retry would fix
         // (constitution V allows no override).
+        //
+        // **FR-061: this is what the row shows — not
+        // `HostUnreachableReason.certificateRejected`.** The names are close
+        // enough that merging them is the next reader's reasonable move, and the
+        // reason not to is that they are cause and effect rather than synonyms.
+        // `certificateRejected` is the outcome of one connection attempt and is
+        // never persisted, so the next probe — the Mac simply being switched
+        // off — would replace it with "offline", and the fact that this
+        // machine's identity changed would vanish from the screen while the
+        // pairing stayed compromised. This state is durable and only a person
+        // can leave it.
         case .certificateChanged: "Certificate changed"
         }
     }
