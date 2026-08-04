@@ -282,6 +282,14 @@ The rules that come out of this, in order of how often they save us:
    concluding a check is weak because a mutation survived, work out whether
    that mutation could have killed it** — otherwise "prove the verdict can
    move" has been applied to everything except the proof itself.
+
+   One habit found all of this, and it is cheap: **make the probe print what it
+   saw, not what it concluded.** A dud mutation, a self-test that had never
+   observed a real breach, three call sites propping up one invariant, an
+   assertion that was never reading the value — each surfaced when someone
+   printed the compiler's actual sentence, the recorded delegate outcomes, the
+   real number. `❌` and `rc=1` are summaries, and every summary is a place two
+   different causes can meet and become indistinguishable.
 3. **"More carefully" is not a fix.** It does nothing for a stale read, a wrong
    ref, or a misused tool — three things that have each bitten us. Change the
    procedure, not the diligence.
@@ -402,6 +410,24 @@ The rules that come out of this, in order of how often they save us:
     something true" but "**does a reader who trusts this end up in the right
     file**". A true message that indicts the wrong component is worse than a
     vague one, because it is actionable.
+
+    Two failures needing different responses must not share a marker. A façade
+    checker printed `❌ the pinning seam is reachable from outside TransportKit`
+    for a run where the seal was intact and the check had merely stopped
+    recognising the compiler's wording — its own header distinguished the two,
+    its closing line had one phrasing for both, and the hook repeated that
+    phrasing. So a stale string sent whoever hit it hunting a breach that did
+    not exist.
+
+    Worse, the collision ran the other way too. The self-test's "breach" step
+    made the protocol public but left the attacking type without a conformance,
+    so the attack still failed to compile — and the check was reading `❌`,
+    which a genuine breach does *not* produce. It had never once observed the
+    thing it exists to detect. **`COMPILED` means the façade is gone; `❌` means
+    something was rejected, and those are opposite events wearing one glyph.**
+    Both directions came from the same habit: printing a verdict rather than
+    what was seen, so distinct causes converged on one symbol before anyone
+    could compare them.
 15. **A wrong comment gets quoted, and the quote does not follow the fix.** Of
     everything here, a comment is the only artifact that can be *disproved and
     still sit there unchanged* — code that is wrong goes red, a test that is
