@@ -220,6 +220,17 @@ The rules that come out of this, in order of how often they save us:
 7. **When a contract requirement looks unmet, ask who is waiting for the value**
    before implementing it. Two of Amendment D's five gaps (D4, D5b) were
    requirements nothing consumed — one of them we nearly staffed as a fix.
+
+   The mirror of this bites when you are the one ruling rather than
+   implementing: **ask whether the rule you just handed down can be carried
+   out at all.** A ruling that only revoked tokens may answer `token_revoked`
+   sounded like a constraint on behaviour; the implementation deleted the
+   grant, so a revoked token and one this bridge never issued were the same
+   object — both absent — and the distinction the rule required did not exist
+   to be reported. It took a tombstone to make the rule implementable, and the
+   person implementing it found that out, not the person who wrote it. Before
+   a ruling leaves your hands, name the state it depends on and check that
+   state exists.
 8. **A tidy post-mortem is suspect.** Blame that lands cleanly on one cause has
    usually been shaped by the story, not the evidence — we had a complete,
    satisfying account of one incident that turned out to be causally wrong in
@@ -321,6 +332,23 @@ The rules that come out of this, in order of how often they save us:
     search scope out loud next to the conclusion, and ask whether the thing
     you are claiming does not exist could live outside it. Absence of evidence
     is the one result whose reliability is invisible in its own output.
+17. **An acceptance run that is allowed to do what the user cannot is not an
+    acceptance run.** The unpair suite passed end to end — revoke, restart the
+    bridge, watch the token get `401 token_revoked`. Restarting is not part of
+    revoking. In the field the daemon stays up, the revoked phone keeps
+    working, and the CLI has already printed success. Every assertion was
+    true; the scenario was not the one that ships.
+
+    This is the second time the same gap has cost us a round. The other was a
+    live suite that could pair, fail, and simply ask for a fresh code, while
+    the code the product hands a user is single-use and expires in 120
+    seconds — a constraint the harness never had to live under.
+
+    So before trusting a green acceptance: list the affordances the harness
+    used that the product's user does not have — restarting a service,
+    reissuing a one-shot secret, reaching into a file, knowing an id nobody
+    displays. Each one is a place where the test is answering an easier
+    question than the one asked.
 
 ## Hooks
 
