@@ -232,16 +232,34 @@ public actor ChatService {
         guard await transport.probe(backend) else { return session }
 
         let reconnected = session.withStatus(.idle, at: now())
-        // Saved even though `.idle` cannot be read back — `restoredStatus` maps
-        // it to `.disconnected` on every read, because no store can know whether
-        // a connection exists. What the write actually buys is clearing a stored
-        // `.error`, which *does* survive a read and would otherwise mark the
-        // conversation failed on every launch forever.
+
+        // Persisted only when the previous status was one a read gives back.
+        //
+        // `restoredStatus` (StoredMapping.swift:99) returns `.error` unchanged
+        // and collapses `.idle/.disconnected/.connecting/.streaming` to
+        // `.disconnected`. So from `.disconnected` or `.connecting` this write
+        // stores a status that the very next read turns back into what was
+        // already there — it cannot change any later answer.
+        //
+        // It is not merely wasted, which is why this is a guard and not a
+        // tidy-up: `withStatus` bumps `updatedAt` (Session.swift:96), and both
+        // repositories sort the list by `updatedAt` descending
+        // (SwiftDataSessionRepository.swift:46). Writing here would push a
+        // conversation to the top of the list because the user *opened* it,
+        // which on screen is indistinguishable from it having new activity.
+        //
+        // From `.error` the write is the point. That one does survive a read,
+        // so a session left failed comes back failed on every launch, forever,
+        // with `canSend` false and no turn permitted to clear it. Replacing it
+        // makes the next read `.disconnected` — still not sendable, but a state
+        // this same call can lift.
         //
         // `try?`: the reconnect succeeded, and a store that could not record it
         // must not turn a working link into a closed composer. The in-memory
         // status is the one the user is about to type against.
-        try? await repository.save(reconnected)
+        if case .error = session.status {
+            try? await repository.save(reconnected)
+        }
         return reconnected
     }
 

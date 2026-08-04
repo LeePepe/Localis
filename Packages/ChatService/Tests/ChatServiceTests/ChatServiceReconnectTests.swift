@@ -84,11 +84,20 @@ struct ChatServiceReconnectTests {
         )
     }
 
+    /// A time strictly after `t0`, for asserting that a write did *not* happen.
+    ///
+    /// The default `now` is pinned to `t0`, which makes a stray save invisible:
+    /// re-saving the fixture at its own `updatedAt` leaves the stored value
+    /// identical to the unsaved one, so the assertion holds either way. Any test
+    /// about whether the row was touched has to move the clock first.
+    private static let t1 = Date(timeIntervalSince1970: 1_700_009_999)
+
     private static func makeService(
         transport: ProbeTransport,
-        repository: InMemorySessionRepository
+        repository: InMemorySessionRepository,
+        now: @escaping @Sendable () -> Date = { t0 }
     ) -> ChatService {
-        ChatService(transport: transport, repository: repository, now: { t0 })
+        ChatService(transport: transport, repository: repository, now: now)
     }
 
     // MARK: - The edge itself
@@ -132,6 +141,40 @@ struct ChatServiceReconnectTests {
 
         let stored = try #require(try await repository.session(id: session.id))
         #expect(stored.status == .disconnected)
+    }
+
+    @Test("opening an old conversation does not move it up the list")
+    func reconnectingDisconnectedDoesNotTouchTheRow() async throws {
+        // The cost of writing a status the store cannot read back.
+        //
+        // From `.disconnected` the save was not merely wasted: `withStatus`
+        // bumps `updatedAt` (Session.swift:96) and both repositories order the
+        // list by it, descending (SwiftDataSessionRepository.swift:46,
+        // SessionRepository.swift:136). So a conversation the user merely
+        // *opened* would jump to the top — on screen, identical to it having
+        // received a reply. Nothing errors, nothing looks broken; the list is
+        // just quietly sorted by "recently viewed" while claiming to be sorted
+        // by activity.
+        //
+        // The clock is moved off `t0` on purpose. With the default `now`, a
+        // save would rewrite `updatedAt` to the value it already held and this
+        // assertion would pass against both implementations — a test that could
+        // not fail, which is the shape this suite exists to avoid.
+        let session = Self.makeSession(status: .disconnected)
+        let repository = InMemorySessionRepository(sessions: [session])
+        let service = Self.makeService(
+            transport: ProbeTransport(answer: true),
+            repository: repository,
+            now: { Self.t1 }
+        )
+
+        let reconnected = await service.reconnect(session, to: Self.makeBackend())
+        // The in-memory answer still carries the new time — that half is the
+        // reconnect working. Only the stored row must be untouched.
+        #expect(reconnected.status == SessionStatus.idle)
+
+        let stored = try #require(try await repository.session(id: session.id))
+        #expect(stored.updatedAt == Self.t0)
     }
 
     @Test("a recovered session no longer reads back as failed")
