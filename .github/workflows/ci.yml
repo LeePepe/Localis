@@ -146,3 +146,18 @@ jobs:
       - name: App target imports what it declares
         continue-on-error: true
         run: bash scripts/check-wiring.sh
+      # Does a credential this repo's shell code handles end up somewhere it can
+      # be read? The criterion is the value's destination — argv, a log, a file,
+      # a step output — not whether it looks like a secret.
+      #
+      # The self-test runs first, and for this check the reason is sharper than
+      # for the others: a secret scanner that has stopped working reports zero
+      # findings, which is exactly what a clean repo reports. `gitleaks` above
+      # already prints that zero honestly, because every credential here arrives
+      # at runtime and there is no literal for it to match. A second scanner
+      # printing the same zero for a different reason would add confidence
+      # without adding coverage.
+      - name: Credential check can still fail
+        run: bash scripts/check-script-credentials.sh --self-test
+      - name: No credential reaches a log, a file or an argv
+        run: bash scripts/check-script-credentials.sh
