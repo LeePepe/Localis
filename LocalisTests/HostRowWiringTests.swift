@@ -82,16 +82,23 @@ struct HostRowWiringTests {
         func pin(for host: HostID) throws -> SPKIHash? { pin }
     }
 
+    /// - Parameter pin: what the Keychain half holds. `nil` is not an exotic
+    ///   fixture: it is what a restored device backup leaves behind, and what
+    ///   `team-lead` hit on the second install while accepting #48 — the store
+    ///   says `.paired`, the Keychain has nothing. Before this parameter existed
+    ///   every model here was built with a pin present, which is why no test in
+    ///   this suite could construct the state at all.
     private static func makeModel(
         hosts: [LocalisHost],
-        probe: StubProbe
+        probe: StubProbe,
+        pin: SPKIHash? = SPKIHash(base64: "AAA=")
     ) async throws -> HostListModel {
         let container = try SessionStoreContainer.inMemory()
         let repository = SwiftDataSessionRepository(container: container)
         for host in hosts { try await repository.save(host) }
         return await HostListModel(
             repository: repository,
-            credentials: StubPins(pin: SPKIHash(base64: "AAA=")),
+            credentials: StubPins(pin: pin),
             probe: probe
         )
     }
@@ -231,6 +238,77 @@ struct HostRowWiringTests {
         await model.load()
 
         #expect(await probe.asked == [host.id])
+    }
+
+    /// A machine that is `.paired` but has lost its pin says so.
+    ///
+    /// **This is the state `team-lead` hit performing #48's acceptance**, on the
+    /// second install of the day: `DemoSeed.populateIfEmpty` writes the Keychain
+    /// only when the store is empty, so installing over existing data left a
+    /// host record saying `.paired` with no pin behind it. The card showed the
+    /// "Paired" pill and, below it, nothing at all — identical to a machine
+    /// whose probe simply had not come back yet. It is not the same: this
+    /// machine can never be probed, because there is no credential to probe
+    /// with.
+    ///
+    /// **Reachable by users, not only by demo seeding.** A restored device
+    /// backup carries the store but not the Keychain — which
+    /// `HostAssembly.joined` names in a comment, in the same breath as saying
+    /// that user "needs to see their machine **and be told to pair it again**".
+    /// Seeing it worked. Being told was never built, and the comment states it
+    /// as fact rather than as an intention, so the gap reads as done.
+    ///
+    /// **Asserted through `rows`, and against the other sentence**, so the
+    /// verdict can move in both directions: it fails if the card stays silent
+    /// (the defect), and it fails if the card blames the network (the wrong
+    /// sentence — waiting fixes nothing here, and #45 is what that substitution
+    /// costs).
+    @Test("a paired machine whose pin is gone says so, rather than staying silent")
+    func pairedHostWithoutPinIsNotSilent() async throws {
+        // `.paired` in the store, nothing in the Keychain. `pin: nil` is the
+        // Keychain half — `HostAssembly` reads it and returns the host with
+        // `canConnect == false`.
+        let host = Self.makeHost("Studio", pinned: false)
+        let probe = StubProbe([:])
+        let model = try await Self.makeModel(hosts: [host], probe: probe, pin: nil)
+
+        await model.load()
+
+        let row = try #require(await model.rows.first)
+        // Still not probed, which is correct and is not what is being fixed:
+        // with no credential a request would only produce a false
+        // `.unauthorized`.
+        #expect(await probe.asked.isEmpty)
+        // The defect. This was `nil` — the same thing "not asked yet" shows.
+        let detail = try #require(
+            row.unreachableDetail,
+            "a machine that can never be probed must not look like one that has not been probed yet"
+        )
+        // And it must not borrow the network sentence, which would send the
+        // user to check a Mac that is awake and answering perfectly well.
+        #expect(detail != HostUnreachableReason.offline.userMessage)
+        // Not connectable either: `canConnect` was already false and nothing
+        // here may turn it true.
+        #expect(row.isConnectable == false)
+    }
+
+    /// The control: a machine that really has not been probed yet stays silent.
+    ///
+    /// Without this, the cheapest way to pass the test above is to put a
+    /// sentence under every quiet machine — which would put "pair again" under
+    /// every Mac at launch, before a single probe has returned. The two states
+    /// differ only in whether an answer is *possible*, so silence has to survive
+    /// for the one where it is still honest.
+    @Test("a paired machine with a pin and no answer yet still says nothing")
+    func pairedHostWithPinStaysSilentUntilAnswered() async throws {
+        let host = Self.makeHost("Studio")
+        let model = try await Self.makeModel(hosts: [host], probe: StubProbe([:]))
+
+        await model.load()
+
+        let row = try #require(await model.rows.first)
+        #expect(row.unreachableDetail == nil)
+        #expect(row.isConnectable)
     }
 
     /// A machine with no answer is not accused of being down.
