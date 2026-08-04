@@ -257,17 +257,31 @@ The rules that come out of this, in order of how often they save us:
    `if status == .streaming` block indented to look like the loop body. Which
    lines belong to which scope is a thing to check, not to read.
 
-   The general form, and the version to remember, is about the *verdict* rather
-   than the code: **an aggregate signal fed by several sources is evidence for
-   none of them individually.** A gate script's self-test judged success by exit
-   code alone. Blinding one of its three probes — replacing the phrase that
-   probe looks for with something the compiler never emits — left the self-test
-   green, because the other two probes still made the run exit non-zero. "Exit
-   non-zero" had never been evidence that probe one could see anything. The
-   repair was to read three signals that cannot substitute for each other, and
-   to slice the output *by section* rather than grepping globally for a failure
-   marker — a global grep is satisfied by exactly the sources you are trying to
-   rule out.
+   The general form is about the *verdict* rather than the code: **an aggregate
+   signal fed by several sources is evidence for none of them individually.** A
+   gate script's self-test judged success by exit code alone, and three probes
+   fed that one code, so it could never have shown whether any single probe
+   still worked. Reading three signals that cannot substitute for each other
+   fixes it, as does slicing output *by section* rather than grepping globally
+   for a failure marker — a global grep is satisfied by exactly the sources you
+   are trying to rule out.
+
+   How that conclusion was reached is worth as much as the conclusion. The
+   first supposed demonstration — blind one probe, watch the self-test stay
+   green — was reported, believed, and written down here. Two things were wrong
+   with it. The self-test copied the script **from the repository** before
+   running it, so every mutant overwrote itself with the pristine original and
+   the mutation never executed at all. And once that was fixed, the mutant
+   still failed to kill, because a blinded probe **cannot** turn the self-test
+   green: its only two exits are "compiled" and "did not compile", both of
+   which mark a failure. It was a dud target — an input structurally incapable
+   of landing on the other side.
+
+   So: a harness that stages a copy is a harness that can quietly test the
+   wrong bytes; check that your mutant is what actually ran. And **before
+   concluding a check is weak because a mutation survived, work out whether
+   that mutation could have killed it** — otherwise "prove the verdict can
+   move" has been applied to everything except the proof itself.
 3. **"More carefully" is not a fix.** It does nothing for a stale read, a wrong
    ref, or a misused tool — three things that have each bitten us. Change the
    procedure, not the diligence.
