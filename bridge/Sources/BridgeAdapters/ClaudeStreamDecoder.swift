@@ -188,7 +188,19 @@ public enum ClaudeStreamDecoder {
     private static func decodeResult(_ frame: [String: Any]) -> [ClaudeStreamOutput] {
         var outputs: [ClaudeStreamOutput] = []
 
-        if let sessionID = frame["session_id"] as? String {
+        // `is_error` is the CLI's own verdict. Reading `subtype` alone would let
+        // a failed turn arrive as a successful empty reply.
+        let failed = frame["is_error"] as? Bool ?? false
+
+        // Reported only on success. A failed result echoes back whatever
+        // `--resume` was given — including an id the CLI has just refused
+        // ("No conversation found with session ID: …", observed 2026-08-04) —
+        // and filing that would write a mapping already proven dead back over
+        // itself. While the mapping lives only in memory this is invisible;
+        // once it is durable it strands the conversation permanently, because
+        // every later turn resumes the same rejected id and no turn can ever
+        // succeed to replace it.
+        if !failed, let sessionID = frame["session_id"] as? String {
             outputs.append(.session(sessionID))
         }
 
@@ -197,9 +209,6 @@ public enum ClaudeStreamDecoder {
             outputs.append(.event(.usage(usage)))
         }
 
-        // `is_error` is the CLI's own verdict. Reading `subtype` alone would let
-        // a failed turn arrive as a successful empty reply.
-        let failed = frame["is_error"] as? Bool ?? false
         outputs.append(.ended(ClaudeTurnResult(
             outcome: failed ? .failed : .completed,
             // A code from §6's vocabulary. The CLI's own message is not

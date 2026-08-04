@@ -107,6 +107,50 @@ struct ClaudeStreamDecoderTests {
         #expect(result.errorCode == "backend_error")
     }
 
+    /// **A failed turn must not report a session id worth keeping.**
+    ///
+    /// Observed 2026-08-04 against the real CLI: `--resume` with a UUID that
+    /// names no conversation exits 1, prints `No conversation found with
+    /// session ID: …` on stderr, and emits exactly one frame — a `result` with
+    /// `is_error: true` whose `session_id` is **the very id that was rejected**,
+    /// echoed straight back. The line below is that frame, trimmed.
+    ///
+    /// If the decoder reports it as a session, the coordinator files it, and a
+    /// mapping that has already been proven dead is written back over itself.
+    /// Once the mapping is durable that means a conversation which is
+    /// permanently unusable: every turn resumes an id the CLI rejects, and no
+    /// turn ever succeeds to replace it. Today the mapping dies with the
+    /// process, which is the only reason this has not been seen.
+    @Test("a failed turn does not report a session id")
+    func failedResultReportsNoSession() throws {
+        let line = """
+        {"type":"result","subtype":"error_during_execution","is_error":true,\
+        "num_turns":0,"session_id":"00000000-dead-4000-8000-000000000000",\
+        "errors":["No conversation found with session ID: 00000000-dead-4000-8000-000000000000"]}
+        """
+
+        let outputs = ClaudeStreamDecoder.decode(line: line)
+
+        let sessions = outputs.compactMap(\.sessionID)
+        #expect(
+            sessions.isEmpty,
+            "the id the CLI just rejected was reported as this turn's session: \(sessions)"
+        )
+    }
+
+    /// The other half, so the test above cannot be satisfied by never reporting
+    /// a session id at all: a *successful* result still reports one.
+    @Test("a successful result still reports its session id")
+    func successfulResultReportsSession() throws {
+        let line = """
+        {"type":"result","subtype":"success","is_error":false,"session_id":"s-ok"}
+        """
+
+        let outputs = ClaudeStreamDecoder.decode(line: line)
+
+        #expect(outputs.compactMap(\.sessionID) == ["s-ok"])
+    }
+
     /// The bridge needs claude's own session id to pass `--resume` on the next
     /// turn; the contract's `x-localis-session-id` is the client's handle and
     /// means nothing to the CLI. Mapping between the two is what makes a
