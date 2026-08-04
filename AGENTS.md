@@ -228,6 +228,23 @@ The rules that come out of this, in order of how often they save us:
     that it ran at all. In each case the mechanism was untested, not proven.
     Ask what would have had to happen for this check to speak, and whether it
     did — then record the answer rather than inferring it.
+13. **Break it *all* the way, or you have not broken it.** The habit in rule 1
+    is only as good as the break: a fix with two parts, reverted in one part,
+    stays green — and that green then argues the test is worthless. Someone was
+    told on the strength of it to delete a test that was, in fact, the only
+    thing guarding the defect. Re-running against the actual pre-fix commit put
+    it straight back to red.
+
+    What makes this worse than an ordinary mistake is that the reasoning had
+    already listed its own alternatives: *"it still passes"* means either the
+    fix does nothing or the test watches nothing — and enumerating those two
+    produced the confidence that the list was complete. It was missing the
+    third: **the revert was partial**. A list you wrote yourself is the last
+    place you will look for a gap.
+
+    So when a control comes back green: before concluding anything about the
+    test, diff your reverted tree against the commit before the fix. Cheap,
+    and it answers a question no amount of care answers.
 
 ## Hooks
 
