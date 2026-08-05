@@ -486,7 +486,12 @@ struct RecordedStreamTests {
             return call
         }
 
-        #expect(calls.count == 2)
+        // `#require` rather than `#expect`: a failed `#expect` does not stop the
+        // test, so a count of 0 here used to run straight into `calls[0]` and
+        // report `Index out of range` — a crash that names the array instead of
+        // the divergence. The fixture's `call_id` key going missing is exactly
+        // what this test exists to catch, and it must be what the failure says.
+        try #require(calls.count == 2)
         #expect(calls[0].callID == calls[1].callID)
         #expect(calls[0].phase == .start)
         #expect(calls[1].phase == .end)
