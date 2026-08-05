@@ -919,6 +919,41 @@ The rules that come out of this, in order of how often they save us:
     step away. `git log HEAD..origin/main --oneline | wc -l` costs nothing.
     Everyone here has now been asked to run it; the person writing this had not
     run it on themselves.
+30. **When a count is the evidence, run it a second time before reasoning from
+    it.** A test process that can be terminated early — by a fatal error, a
+    timeout, an OOM — truncates its own output without leaving a mark, so
+    "how many issues were reported" is not a property of the code. The same
+    source, the same mutation, and the same command reported 2, 2, and 3 issues
+    across three runs; ten runs of the pre-fix source put one of those issues at
+    4/10 and another at 9/10. Nothing about the code differed between them.
+
+    The damage was not the wrong number, it was the subtraction. One person ran
+    the pre-fix version once and the post-fix version once, got 2 and 3, and
+    read the difference as a mechanism ("the crash swallowed the third
+    assertion"). Another had an older pre-fix run showing all three and used it
+    to reject that mechanism. **Both outputs were real. Both were single samples
+    of an unstable quantity, and the "1" between them corresponded to nothing.**
+    A correct conclusion was withdrawn on the strength of it — which is the
+    expensive part, because it made a guard that was holding sound like a guard
+    that leaks, and the next person to read that would go fix a failure mode
+    that does not exist.
+
+    This is not rule 24's shape; it is rule 24's *prescription* failing. Two
+    distinct inputs with distinct expected outputs is exactly what was run here.
+    That method assumes the measurement is a function of the input, and a count
+    taken from a process that can die mid-run is not. **Two samples of one
+    condition beat two conditions sampled once each**, whenever the observation
+    itself might move.
+
+    The operational line: **a number may only support "this occurred at least
+    once" until it has been reproduced.** Do not difference two counts, do not
+    infer a mechanism from a count, and do not overturn someone's conclusion
+    with a count — until the same command has been run against the same bytes
+    more than once. And note the asymmetry that makes this hard to catch: a
+    wrong conclusion with one real observation behind it is *harder* to
+    dislodge than one with no evidence at all, because producing evidence looks
+    like having verified. What was verified is that the number occurred, not
+    that it recurs.
 
 ## Hooks
 
