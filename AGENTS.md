@@ -276,6 +276,8 @@ The rules that come out of this, in order of how often they save us:
    fixes it, as does slicing output *by section* rather than grepping globally
    for a failure marker — a global grep is satisfied by exactly the sources you
    are trying to rule out.
+   (Splitting them is necessary and not sufficient: rule 31 is what happens
+   after the signals are already separate.)
 
    How that conclusion was reached is worth as much as the conclusion. The
    first supposed demonstration — blind one probe, watch the self-test stay
@@ -954,6 +956,57 @@ The rules that come out of this, in order of how often they save us:
     dislodge than one with no evidence at all, because producing evidence looks
     like having verified. What was verified is that the number occurred, not
     that it recurs.
+31. **When a set of checks goes green together, ask which one could have gone
+    red because of this change.** The rest are regression guards. They are
+    worth having and they are not evidence about the change in front of you,
+    and nothing in the output distinguishes the two.
+
+    CI here reports nine checks. A pull request touching only
+    `LocalisTests/` moves exactly one of them: that directory belongs to the app
+    target (`project.yml:102-106`), and the `spm` matrix names seven package
+    directories (`ci.yml:29-35`), so those seven jobs never compile it. Eight
+    green checks meant "nothing else broke." Read as nine, it looks like nine
+    independent confirmations of the change, and eight PRs were merged on that
+    reading in one day.
+
+    **Both directions of the mistake happened, and the second is the expensive
+    one.** Counting guards as verification overstates what you have. Counting a
+    load-bearing check as a guard says a gate is not watching, so nobody goes
+    and fixes it — and that belief is what survives into the next change. Here
+    that was the claim that a docs-only PR has *no* load-bearing check among the
+    nine. `Lint & policy` runs `gitleaks detect` over every reachable object
+    (`ci.yml:113`, and rule 22): in a scratch repository, one `DOC.md`
+    containing prose gives `no leaks found`, and the same file containing
+    `glpat-…` gives `leaks found: 1`, `rc=1`. The verdict moves with the
+    contents of a `.md`. That job is load-bearing for every change in this
+    repository, and it has already blocked five pull requests at once.
+
+    Where the wrong reading came from: the job is called `Lint & policy`, which
+    sounds like something that reads Swift. It runs gitleaks, SwiftLint, and
+    three policy scripts, and gitleaks reads *content*, not code. **Judging
+    load-bearing by a job's name is the same error as judging semantics by a
+    symbol's name** — the trap already recorded above (`:209`), reappearing one
+    level up, on the apparatus rather than on the code.
+
+    So the criterion is **causal, not by ownership**. "Whatever target the
+    change lands in, name that job" is a static map, and it misses this case
+    exactly: `Lint & policy` belongs to no target and is load-bearing for all of
+    them. Ask instead what each job actually reads, and whether this diff can
+    reach it. Report it that way too — "green, and the one that could have
+    failed is X" — because "all nine passed" is true, unfalsifiable, and says
+    nothing.
+
+    A note on where this sits relative to rule 2. Its aggregate paragraph
+    (`:271-278`) is about several sources collapsing into one verdict, and its
+    prescription is to read signals that cannot substitute for each other. Nine
+    separately-reported checks already satisfy that, and the problem is still
+    here — so this is **rule 2's prescription failing, not an instance of rule
+    2**, the same relation rule 30 has to rule 24. That relation has now
+    appeared twice, which makes it worth naming on its own: **a prescription
+    being satisfied is not the problem being solved.** When a rule's remedy is
+    in place and the failure it names still happens, the next rule is about the
+    assumption the remedy was resting on — here, that separate signals are
+    signals about the same thing.
 
 ## Hooks
 
