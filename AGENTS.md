@@ -312,6 +312,24 @@ The rules that come out of this, in order of how often they save us:
    control comes back the way you hoped, confirm it ran**: a red should name
    the assertion that failed, a green should name the tests that passed.
 
+   There is a fourth kind, and it is the one that sentence does not reach:
+   **a control proves the command works; it does not prove the corpus is the
+   one you meant.** Searching for a phrase from rule 30 gave zero hits while
+   the control `grep -c "rule "` gave 23 — the command was demonstrably
+   working, and those 23 were real, because the file being read was a local
+   copy 35 lines shorter than `origin/main`, and the missing 35 were rule 30.
+   Every other wrong-corpus error that day took the control down with it
+   (searching one document for another's wording, a truncated `tail`, a log
+   without per-test lines); a *stale* corpus is the one where the control
+   still hits, because its target genuinely exists in the old version. The
+   stale tree is only this instance's carrier — the shape is any corpus the
+   control shares with the search, containing what the control looks for and
+   not what you are looking for. Rules 16 (`:610-613`) and 29 (`:936-941`)
+   already name the carrier and its one-line remedy; the remedy was written
+   there by someone who had not yet run it on themselves, which is why it is
+   worth restating as a property of controls rather than as advice about
+   trees.
+
    One habit found all of this, and it is cheap: **make the probe print what it
    saw, not what it concluded.** A dud mutation, a self-test that had never
    observed a real breach, three call sites propping up one invariant, an
