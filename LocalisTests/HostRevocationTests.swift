@@ -74,6 +74,48 @@ struct HostRevocationTests {
     }
 
     private struct Locked: Error {}
+    private struct Unwritable: Error {}
+
+    /// A store that reads normally and refuses exactly one write.
+    ///
+    /// **Why not `HostRecoveryTests.FailingRepository`.** That one throws from
+    /// every method, so `apply` fails at the `host(id:)` read and returns before
+    /// touching the Keychain — the half-completed interleaving this fixture
+    /// exists for never happens. Here the reads go to a real in-memory store and
+    /// only `save(_ host:)` fails, which is the second of `apply`'s two writes
+    /// and the only one with no assertion behind it.
+    ///
+    /// `inner` is exposed so a test can seed through it (bypassing the refusal)
+    /// and read back afterwards what the failed write did not change.
+    private struct HostWriteFailingRepository: SessionRepository {
+        let inner: InMemorySessionRepository
+
+        /// The subject: the store write that follows a successful Keychain
+        /// deletion. A distinct error type from `Locked` so an assertion can
+        /// name *which* of the two writes failed rather than accepting either.
+        func save(_ host: LocalisHost) async throws { throw Unwritable() }
+
+        func hosts() async throws -> [LocalisHost] { try await inner.hosts() }
+        func host(id: HostID) async throws -> LocalisHost? { try await inner.host(id: id) }
+        func deleteHost(id: HostID) async throws { try await inner.deleteHost(id: id) }
+        func allSessions() async throws -> [Session] { try await inner.allSessions() }
+        func sessions(matching query: SessionQuery) async throws -> [Session] {
+            try await inner.sessions(matching: query)
+        }
+        func session(id: UUID) async throws -> Session? { try await inner.session(id: id) }
+        func create(_ session: Session) async throws { try await inner.create(session) }
+        func save(_ session: Session) async throws { try await inner.save(session) }
+        func delete(id: UUID) async throws { try await inner.delete(id: id) }
+        func backends(ofHost hostID: HostID) async throws -> [AgentBackend] {
+            try await inner.backends(ofHost: hostID)
+        }
+        func save(_ backend: AgentBackend, on hostID: HostID) async throws {
+            try await inner.save(backend, on: hostID)
+        }
+        func deleteBackend(id: String, on hostID: HostID) async throws {
+            try await inner.deleteBackend(id: id, on: hostID)
+        }
+    }
 
     private static func paired(_ name: String) -> LocalisHost {
         LocalisHost(
@@ -272,6 +314,49 @@ struct HostRevocationTests {
         await #expect(throws: (any Error).self) {
             try await revocation.apply(.tokenRevoked, to: host.id)
         }
+    }
+
+    @Test("a failed store write leaves a machine that reads paired but cannot connect")
+    func storeWriteFailureIsFailClosed() async throws {
+        // The other half of the interleaving above, and the one #53 was opened
+        // about: the Keychain deletion succeeds and the store write does not, so
+        // the record still says `.paired` while the credential is gone.
+        //
+        // This state was ruled acceptable on the argument that the read path
+        // treats it as untrustworthy — `HostAssembly` finds `.paired`, asks for
+        // the pin, gets nothing, and returns `canConnect == false`. **That was
+        // an argument and nothing executed it**, which is what this pins.
+        //
+        // Note the last two assertions go through `HostAssembly`, not through
+        // the store. Reading the record back directly would show
+        // `canConnect == false` whatever happened, because every
+        // `SessionRepository` strips the pin on save and the join is the only
+        // place the halves meet. A store-only assertion here would stay green on
+        // an implementation that never deleted the credential at all.
+        let host = Self.paired("Studio")
+        let inner = InMemorySessionRepository()
+        try await inner.save(host)
+        let repository = HostWriteFailingRepository(inner: inner)
+        let credentials = SpyCredentials(pins: [host.id: SPKIHash(base64: "AAA=")])
+
+        let revocation = HostRevocation(repository: repository, credentials: credentials)
+        await #expect(throws: Unwritable.self) {
+            try await revocation.apply(.tokenRevoked, to: host.id)
+        }
+
+        // The Keychain half did run — otherwise this is a test about a store
+        // that failed before anything happened, which the case above covers.
+        #expect(credentials.removed == [host.id])
+        // And the record is exactly as stale as predicted.
+        let stored = try #require(try await repository.host(id: host.id))
+        #expect(stored.pairingState == .paired)
+
+        // The fail-closed property itself: the machine is still listed, and it
+        // is not offered as connectable.
+        let assembly = HostAssembly(repository: repository, credentials: credentials)
+        let joined = try #require(try await assembly.host(id: host.id))
+        #expect(joined.pinnedSPKI == nil)
+        #expect(joined.canConnect == false)
     }
 
     @Test("revoking a machine that is not on file is not an error")
