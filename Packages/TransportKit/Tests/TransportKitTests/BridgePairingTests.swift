@@ -87,15 +87,14 @@ struct BridgePairingTests {
         {"token":"opaque-token","bridge_name":"Tian's MacBook Pro","protocol":1,"bridge_id":"bridge-abc"}
         """)])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
         let host = HostID()
         let pin = try #require(SPKIPinning.spkiHash(of: try Self.certificate("host-a")))
+        let pairing = BridgePairing(http: http, credentials: store, pin: pin)
 
         let result = try await pairing.pair(
             host: host,
             endpoint: HostEndpoint(host: "mac.local", port: 8443),
             code: "418302",
-            presenting: pin,
             deviceName: "Tian's iPhone",
             deviceID: UUID()
         )
@@ -118,14 +117,13 @@ struct BridgePairingTests {
         {"token":"t","bridge_name":"Old Bridge","protocol":1}
         """)])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
         let host = HostID()
 
         let result = try await pairing.pair(
             host: host,
             endpoint: HostEndpoint(host: "mac.local", port: 8443),
             code: "418302",
-            presenting: SPKIHash(base64: "AAA="),
             deviceName: "iPhone",
             deviceID: UUID()
         )
@@ -140,13 +138,12 @@ struct BridgePairingTests {
     func requestShape() async throws {
         let http = StubHTTP(responses: [.success(status: 200, body: #"{"token":"t","bridge_name":"M","protocol":1}"#)])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
 
         _ = try await pairing.pair(
             host: HostID(),
             endpoint: HostEndpoint(host: "mac.local", port: 8443),
             code: "418302",
-            presenting: SPKIHash(base64: "AAA="),
             deviceName: "Tian's iPhone",
             deviceID: UUID()
         )
@@ -167,7 +164,7 @@ struct BridgePairingTests {
     func wrongCodeRejected() async throws {
         let http = StubHTTP(responses: [.success(status: 401, body: #"{"error":{"code":"invalid_code"}}"#)])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
         let host = HostID()
 
         await #expect(throws: LocalisError.pairingCodeRejected) {
@@ -175,7 +172,6 @@ struct BridgePairingTests {
                 host: host,
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
                 code: "000000",
-                presenting: SPKIHash(base64: "AAA="),
                 deviceName: "iPhone",
                 deviceID: UUID()
             )
@@ -202,14 +198,13 @@ struct BridgePairingTests {
         // it stayed green through exactly the defect it was written to catch.
         let http = StubHTTP(responses: [.success(status: 429, body: #"{"error":{"code":"too_many_attempts"}}"#)])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
 
         await #expect(throws: LocalisError.pairingSessionExpired) {
             try await pairing.pair(
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
                 code: "000000",
-                presenting: SPKIHash(base64: "AAA="),
                 deviceName: "iPhone",
                 deviceID: UUID()
             )
@@ -233,14 +228,13 @@ struct BridgePairingTests {
             body: #"{"error":{"code":"backend_unavailable","message":"/Users/someone/Library/whatever"}}"#
         )])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
 
         do {
             _ = try await pairing.pair(
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
                 code: "000000",
-                presenting: SPKIHash(base64: "AAA="),
                 deviceName: "iPhone",
                 deviceID: UUID()
             )
@@ -263,7 +257,7 @@ struct BridgePairingTests {
             repeating: .success(status: 401, body: #"{"error":{"code":"invalid_code"}}"#), count: 5
         ) + [.success(status: 429, body: #"{"error":{"code":"too_many_attempts"}}"#)])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
 
         for _ in 0..<5 {
             await #expect(throws: LocalisError.pairingCodeRejected) {
@@ -271,7 +265,6 @@ struct BridgePairingTests {
                     host: HostID(),
                     endpoint: HostEndpoint(host: "mac.local", port: 8443),
                     code: "000000",
-                    presenting: SPKIHash(base64: "AAA="),
                     deviceName: "iPhone",
                     deviceID: UUID()
                 )
@@ -287,7 +280,6 @@ struct BridgePairingTests {
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
                 code: "000000",
-                presenting: SPKIHash(base64: "AAA="),
                 deviceName: "iPhone",
                 deviceID: UUID()
             )
@@ -300,7 +292,7 @@ struct BridgePairingTests {
     func missingTokenIsMalformed() async throws {
         let http = StubHTTP(responses: [.success(status: 200, body: #"{"bridge_name":"M","protocol":1}"#)])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
         let host = HostID()
 
         await #expect(throws: LocalisError.malformedResponse) {
@@ -308,7 +300,6 @@ struct BridgePairingTests {
                 host: host,
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
                 code: "418302",
-                presenting: SPKIHash(base64: "AAA="),
                 deviceName: "iPhone",
                 deviceID: UUID()
             )
@@ -325,14 +316,13 @@ struct BridgePairingTests {
         // bridge, surfacing later as a mysterious 401 far from the cause.
         let http = StubHTTP(responses: [.success(status: 200, body: #"{"token":"  ","bridge_name":"M","protocol":1}"#)])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
 
         await #expect(throws: LocalisError.malformedResponse) {
             try await pairing.pair(
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
                 code: "418302",
-                presenting: SPKIHash(base64: "AAA="),
                 deviceName: "iPhone",
                 deviceID: UUID()
             )
@@ -345,14 +335,13 @@ struct BridgePairingTests {
     func garbageBodyIsMalformed() async throws {
         let http = StubHTTP(responses: [.success(status: 200, body: "<html>gateway</html>")])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
 
         await #expect(throws: LocalisError.malformedResponse) {
             try await pairing.pair(
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
                 code: "418302",
-                presenting: SPKIHash(base64: "AAA="),
                 deviceName: "iPhone",
                 deviceID: UUID()
             )
@@ -367,7 +356,7 @@ struct BridgePairingTests {
         // sends them to re-read a code that was fine.
         let http = StubHTTP(responses: [.failure(URLError(.cannotConnectToHost))])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
 
         // Matches the case, not the whole value: since #34 the error carries the
         // OS's domain and code, so comparing against `.unreachable()` would be
@@ -378,7 +367,6 @@ struct BridgePairingTests {
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
                 code: "418302",
-                presenting: SPKIHash(base64: "AAA="),
                 deviceName: "iPhone",
                 deviceID: UUID()
             )
@@ -410,14 +398,13 @@ struct BridgePairingTests {
     func certificateFailureDuringPairingIsPinMismatch() async throws {
         let http = StubHTTP(responses: [.failure(URLError(.serverCertificateUntrusted))])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
 
         await #expect(throws: LocalisError.certificatePinMismatch) {
             try await pairing.pair(
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
                 code: "418302",
-                presenting: SPKIHash(base64: "AAA="),
                 deviceName: "iPhone",
                 deviceID: UUID()
             )
@@ -431,14 +418,13 @@ struct BridgePairingTests {
         // travel further than anyone expects.
         let http = StubHTTP(responses: [.success(status: 401, body: #"{"error":{"code":"invalid_code"}}"#)])
         let store = HostCredentialStore(service: Self.testService())
-        let pairing = BridgePairing(http: http, credentials: store)
+        let pairing = BridgePairing(http: http, credentials: store, pin: SPKIHash(base64: "AAA="))
 
         do {
             _ = try await pairing.pair(
                 host: HostID(),
                 endpoint: HostEndpoint(host: "mac.local", port: 8443),
                 code: "418302",
-                presenting: SPKIHash(base64: "AAA="),
                 deviceName: "iPhone",
                 deviceID: UUID()
             )

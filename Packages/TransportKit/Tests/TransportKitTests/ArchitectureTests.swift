@@ -171,6 +171,58 @@ struct ArchitectureTests {
         }
     }
 
+    /// Constitution V: the type that can build an **unpinned** session must not
+    /// be constructible from outside this package.
+    ///
+    /// `PinnedHTTP(pin:)` accepts `SPKIHash?`, and nil refuses every connection
+    /// (`PinnedTrust.swift:41`) — so the danger is not that a nil-pinned session
+    /// connects insecurely, it is that a caller outside the package could build
+    /// a session at all and, later, be handed a way to relax it. The public way
+    /// in is `BridgePairing(pinnedTo:)`, whose pin is non-optional, which makes
+    /// "pair without a pin" unexpressible rather than merely discouraged
+    /// (Amendment E §3).
+    ///
+    /// **Checked by sweeping source, because a test cannot assert an absence.**
+    /// Writing `PinnedHTTP(...)` in a non-`@testable` test file is a compile
+    /// error, which fails the build rather than the test — so there is nothing
+    /// for `PublicSurfaceTests` to express, and the guard has to be this.
+    @Test("the unpinned session type is not public")
+    func pinnedSessionStaysInternal() throws {
+        let files = try Self.sourceFiles()
+        let carrier = files.first { $0.name == "PinnedTrust.swift" }
+
+        // Without this the sweep passes vacuously the day the file is renamed —
+        // the same shape as a `--filter` that matches nothing.
+        let text = try #require(carrier?.text, "PinnedTrust.swift is gone; this rule stopped being checked")
+
+        for line in Self.codeLines(of: text) {
+            for shape in ["public struct PinnedHTTP", "public init(\n", "open struct PinnedHTTP"]
+            where line.text.hasPrefix(shape) {
+                Issue.record(
+                    """
+                    PinnedTrust.swift:\(line.number) exposes the unpinned session type. \
+                    Outside this package the only way to a session must be \
+                    `BridgePairing(pinnedTo:)`, whose pin cannot be nil (Amendment E §3).
+                    \(line.text)
+                    """
+                )
+            }
+        }
+
+        // The initialiser separately: it is on `PinnedHTTP` and could be widened
+        // without the type declaration changing.
+        let declaration = "struct PinnedHTTP"
+        let lines = Self.codeLines(of: text)
+        guard let start = lines.firstIndex(where: { $0.text.contains(declaration) }) else {
+            Issue.record("`\(declaration)` not found — this rule is checking nothing")
+            return
+        }
+        #expect(
+            lines[start].text.hasPrefix("struct "),
+            "PinnedHTTP must be internal; found: \(lines[start].text)"
+        )
+    }
+
     /// Amendment A §1.1: a client speaks to **one** host.
     ///
     /// `BridgeDiscovery` is the deliberate exception — it emits sightings one at

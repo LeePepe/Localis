@@ -315,13 +315,18 @@ struct LiveBridgeIntegrationTests {
         // (PinnedTrust.swift:41), so a nil-pinned session cannot connect at
         // all. Since the pin arrived out of band here, using it is both
         // possible and strictly stronger.
-        let pairing = BridgePairing(http: PinnedHTTP(pin: pin), credentials: credentials)
+        //
+        // Built through the **public** initialiser, not the internal seam. This
+        // is the one test in the package that talks to a real bridge, so it is
+        // the only place the app's actual entry point can be exercised against
+        // a real handshake — `PublicSurfaceTests` proves the initialiser exists
+        // and this proves it works.
+        let pairing = BridgePairing(pinnedTo: pin, credentials: credentials)
 
         let result = try await pairing.pair(
             host: host,
             endpoint: endpoint,
             code: try LiveBridge.pairingCode(),
-            presenting: pin,
             deviceName: "integration-harness",
             deviceID: UUID()
         )
