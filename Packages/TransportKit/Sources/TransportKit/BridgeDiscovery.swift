@@ -149,6 +149,14 @@ public struct BridgeDiscovery: Sendable {
 
     private let browser: any BridgeBrowser
 
+    /// The seam, for tests that inject a scripted browser.
+    ///
+    /// The **public** entry point is `init()`, and it does not live here — it is
+    /// in `NetworkBrowser.swift`, beside the browser it constructs. Worth
+    /// knowing before concluding this type is unreachable from outside the
+    /// package: `BridgeDiscovery(browser: NetworkBrowser())` does not compile
+    /// there and `BridgeDiscovery()` does, which is easy to measure the wrong
+    /// way round.
     init(browser: any BridgeBrowser) {
         self.browser = browser
     }
