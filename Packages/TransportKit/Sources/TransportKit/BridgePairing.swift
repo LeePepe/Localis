@@ -21,6 +21,28 @@ public struct BridgePairing: Sendable {
         /// Optional per Amendment A §1.6 — older bridges omit it, and the
         /// client falls back to SPKI matching.
         public let bridgeID: String?
+
+        /// **Public so a caller outside this package can construct one**, which
+        /// is what makes `pair` substitutable rather than merely callable.
+        ///
+        /// A `public struct` with no explicit initialiser gets an *internal*
+        /// memberwise one, so this type was returnable and not constructible —
+        /// an app-side seam declaring `-> BridgePairing.Result` compiles, and no
+        /// fake conforming to it can be written, because no fake can produce the
+        /// return value. That is the same half-a-wire shape as the `internal`
+        /// initialiser on `BridgePairing` itself (task #1): the entry point was
+        /// opened and its return type was not, so "reachable" and "testable"
+        /// came apart with nothing to show for it.
+        ///
+        /// Carries no credential by construction — the token goes straight to
+        /// the Keychain inside `pair` and is never a field here — so a
+        /// constructible `Result` gives a caller nothing it could not already
+        /// read off a successful pairing.
+        public init(bridgeName: String, protocolVersion: Int, bridgeID: String?) {
+            self.bridgeName = bridgeName
+            self.protocolVersion = protocolVersion
+            self.bridgeID = bridgeID
+        }
     }
 
     private let http: any HTTPPerforming
