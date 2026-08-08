@@ -3,7 +3,6 @@ import Testing
 
 @testable import Localis
 
-import ChatService
 import LocalisModels
 import SessionStore
 import TransportKit
@@ -394,13 +393,18 @@ struct HostRevocationTests {
         try await repository.create(session)
         let credentials = SpyCredentials(pins: [host.id: SPKIHash(base64: "AAA=")])
 
+        // The pin goes in through `credentials`, not through the host record:
+        // `Self.paired` leaves `pinnedSPKI` nil because `save(_ host:)` would
+        // strip it anyway. `HostAssembly` reattaches it during `load()`, which
+        // is what makes this host `canConnect` and so what makes the model build
+        // a transport at all. Passing the same spy to both the assembly and the
+        // revocation is deliberate: one Keychain, and the deletion this test
+        // asserts has to be visible to the half that reads.
         let model = await SessionDetailModel(
             repository: repository,
             sessionID: session.id,
-            service: ChatService(
-                transport: RefusingTransport(error: .tokenRevoked),
-                repository: repository
-            ),
+            credentials: credentials,
+            makeTransport: { _ in RefusingTransport(error: .tokenRevoked) },
             revocation: HostRevocation(repository: repository, credentials: credentials)
         )
         await model.load()
@@ -420,7 +424,9 @@ struct HostRevocationTests {
     /// A transport that refuses every turn with one error.
     ///
     /// `EchoTransport` cannot express this — it succeeds unconditionally, which
-    /// is fine for the assembly tests and useless here.
+    /// is fine for the assembly suites that stream through it and useless here.
+    /// (It is a `LocalisTests` fixture as of milestone B; the app itself builds
+    /// a `BridgeClient` per host, which no test can use without a Mac.)
     private struct RefusingTransport: AgentTransport {
         let error: LocalisError
 
