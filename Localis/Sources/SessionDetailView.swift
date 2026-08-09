@@ -4,6 +4,7 @@ import LocalisModels
 import LocalisUI
 import SessionStore
 import SwiftUI
+import TransportKit
 
 /// One session: its transcript, and the composer under it.
 ///
@@ -11,10 +12,11 @@ import SwiftUI
 /// the service is the only thing that knows the *order* of persist-then-stream,
 /// and a view that saved its own message would write half a turn.
 ///
-/// The transport under that service is `EchoTransport` for milestone A, and the
-/// screen says so. Everything else on the path is real: the session and its
-/// backend come from the store, the turn is persisted before it streams, and it
-/// is still there after a relaunch.
+/// **The far end is a real `BridgeClient` as of milestone B**, built for this
+/// conversation's own machine. Nothing on the path is a stand-in any more: the
+/// session and its backend come from the store, the host comes from
+/// `HostAssembly` with its Keychain pin reattached, the turn is persisted before
+/// it streams, and it is still there after a relaunch.
 @MainActor
 @Observable
 final class SessionDetailModel {
@@ -34,7 +36,27 @@ final class SessionDetailModel {
 
     private let repository: any SessionRepository
     private let sessionID: UUID
-    private let service: ChatService
+    /// Rejoins a stored host record with its Keychain pin.
+    ///
+    /// **The session's host must come through here rather than off the
+    /// repository.** The store has no pin column, so a record read straight from
+    /// it always has `canConnect == false` and `pinnedSPKI == nil` — and a
+    /// `BridgeClient` built from that host refuses every connection, because
+    /// `PinnedHTTP` treats a nil pin as "no permission" rather than as trust on
+    /// first use. Every conversation on a genuinely paired Mac would then fail
+    /// at the TLS handshake, which reads on screen as the Mac being offline.
+    /// This is the one join that reattaches the pin and it is meant to be the
+    /// only one (`HostAssembly`).
+    private let assembly: HostAssembly
+    /// Builds the transport for the machine this conversation lives on.
+    ///
+    /// Injected rather than constructed for the reason `HostProbing` is: a model
+    /// that built its own `BridgeClient` could be exercised only against a real
+    /// Mac, so "a signed-out agent says so" and "a revoked token unpairs the
+    /// machine" would be checkable by hand and never in a suite.
+    private let makeTransport: ChatTransportFactory
+    /// Built in `load()`, not in `init` — see `service(for:)`.
+    private var service: ChatService?
     /// Applies whatever a refusal implies about the machine's pairing.
     ///
     /// Held here because this is where a 401 actually lands: the transport maps
@@ -45,15 +67,25 @@ final class SessionDetailModel {
     private var session: Session?
     private var streamTask: Task<Void, Never>?
 
+    /// - Parameters:
+    ///   - credentials: reads pins for the host join. Defaults to the real
+    ///     Keychain; a test substitutes one so the suite does not go red for
+    ///     Keychain reasons unrelated to its subject (`PinReading`).
+    ///   - makeTransport: defaults to a real `BridgeClient` per host. Tests pass
+    ///     a fake — that substitution is the only thing this parameter is for,
+    ///     and it replaces the *whole* transport, so everything downstream of it
+    ///     is the same code production runs.
     init(
         repository: any SessionRepository,
         sessionID: UUID,
-        service: ChatService,
+        credentials: any PinReading = HostCredentialStore(),
+        makeTransport: @escaping ChatTransportFactory = BridgeTransport.factory,
         revocation: HostRevocation? = nil
     ) {
         self.repository = repository
         self.sessionID = sessionID
-        self.service = service
+        self.assembly = HostAssembly(repository: repository, credentials: credentials)
+        self.makeTransport = makeTransport
         self.revocation = revocation ?? HostRevocation(repository: repository)
     }
 
@@ -68,6 +100,14 @@ final class SessionDetailModel {
             }
             apply(session)
             await resolveBackend(for: session)
+            // After `resolveBackend`, so that when both fail the machine-level
+            // sentence is the one left standing. "This Mac isn't on this device
+            // any more" and "this conversation's agent isn't on this Mac" name
+            // two different missing things and two different fixes, and the
+            // first subsumes the second — an agent cannot be found on a machine
+            // that is not there. Ordering these the other way round would leave
+            // the user looking for a missing agent on a Mac they no longer have.
+            await openService(for: session)
             loadError = nil
             // Only now, and only if a backend was found. A restored session
             // arrives `.disconnected` and nothing else in the app writes `.idle`
@@ -78,6 +118,91 @@ final class SessionDetailModel {
             await reconnectIfPossible()
         } catch {
             loadError = (error as? LocalisError)?.userMessage ?? "Please try again."
+        }
+    }
+
+    /// Builds the `ChatService` for this conversation's own machine.
+    ///
+    /// **Why this cannot happen in `init`.** The transport is per host — one
+    /// token, one pinned certificate, one endpoint (`BridgeClient`) — and the
+    /// host is `session.hostID`, which is not known until the session has been
+    /// read. A service built in `init` could only be built for *some* host, and
+    /// the only ones available there are none and a guess.
+    ///
+    /// **Failure leaves `service` nil rather than throwing.** Two failures land
+    /// here and neither is a reason to hide the transcript (FR-036): a host row
+    /// that is gone, and a Keychain that could not be read. Both cost the send
+    /// path only, which is what `sendBlockedReason` is for.
+    private func openService(for session: Session) async {
+        do {
+            guard let host = try await assembly.host(id: session.hostID) else {
+                // No record for the machine this conversation names. The
+                // conversation is still the user's; there is simply nothing to
+                // send it to. Worded about the Mac rather than about the agent —
+                // `resolveBackend`'s sentence names an agent that is missing from
+                // a machine that is present, which is a different situation and a
+                // different fix.
+                service = nil
+                sendBlockedReason = String(
+                    localized: "This conversation's Mac isn't on this device any more."
+                )
+                return
+            }
+            // The same refusal `BridgeHostProbe` makes, and for a stronger
+            // reason here: a `BridgeClient` built for an unconnectable host is
+            // not merely useless, it fails in a way that describes the wrong
+            // problem. With no pin `PinnedHTTP` rejects the handshake, and with
+            // no token `request` throws `.unauthorized`, whose wording is "This
+            // Mac no longer accepts this device" — every word of which is false
+            // about a machine the user has not paired yet, and it sends them to
+            // inspect a pairing that was never made.
+            guard host.canConnect else {
+                service = nil
+                sendBlockedReason = Self.unconnectableReason(for: host)
+                return
+            }
+            service = ChatService(transport: try makeTransport(host), repository: repository)
+        } catch {
+            // A Keychain that would not answer is not a machine that is
+            // unpaired, and must not be reported as one — re-pairing is exactly
+            // the operation that overwrites the pin we failed to read
+            // (`HostAssembly.joined`). So the error is surfaced with its own
+            // words rather than swallowed into the sentence above.
+            service = nil
+            sendBlockedReason = (error as? LocalisError)?.userMessage
+                ?? String(localized: "Couldn't reach this conversation's Mac on this device.")
+        }
+    }
+
+    /// Why a machine on file still cannot be connected to.
+    ///
+    /// Three sentences because there are three different things for the user to
+    /// do, and the sentences are borrowed rather than written: the same
+    /// situation reached from the host list and from here must not produce two
+    /// different texts about it.
+    ///
+    /// Exhaustive with no `default`, so a new pairing state has to be given
+    /// words rather than inheriting whichever case happened to be last.
+    private static func unconnectableReason(for host: LocalisHost) -> String {
+        switch host.pairingState {
+        case .certificateChanged:
+            // Constitution V: named, and never worded as something a plain
+            // re-pair fixes — re-pairing would pin whatever certificate is being
+            // presented now, which is the attack the pin exists to stop.
+            return HostUnreachableReason.certificateRejected.userMessage
+        case .paired:
+            // Paired with no pin: a restored device backup carries the store but
+            // not the Keychain. `HostReachability.missingCredentialMessage` is
+            // the sentence written for exactly this state, and the host list
+            // already shows it (#51).
+            return HostReachability.missingCredentialMessage
+        case .discovered, .pairing, .revoked:
+            // Nothing was ever established with this machine, or it was undone.
+            // Not "isn't answering": no request was made, and blaming the
+            // network sends the user to check a Wi-Fi connection that is fine.
+            return String(
+                localized: "This Mac isn't paired. Pair it again to continue this conversation."
+            )
         }
     }
 
@@ -99,7 +224,11 @@ final class SessionDetailModel {
     /// supplies the fresh value; before it existed, a signed-out agent got an
     /// open composer and failed at the far end.
     private func reconnectIfPossible() async {
-        guard let session, let backend else { return }
+        // No service means the machine could not be reached at all — no host
+        // record, no pin, or a Keychain that would not answer. `openService`
+        // has already put that sentence on screen, and asking a transport that
+        // does not exist is not a thing to report twice.
+        guard let session, let backend, let service else { return }
 
         let (reconnected, description) = await service.reopen(session, to: backend)
         apply(describing: description)
@@ -218,6 +347,17 @@ final class SessionDetailModel {
                 ?? String(localized: "This conversation has no agent to send to.")
             return
         }
+        // Same shape, one layer out: the backend was found and the machine it
+        // lives on could not be opened. `openService` sets a reason on all four
+        // of its failure branches, so the `??` is the same tripwire as above and
+        // not an expected path. Silently returning here is the one behaviour
+        // ruled out — a send button that swallows the message reads as a slow
+        // network, and the user retypes.
+        guard let service else {
+            sendBlockedReason = sendBlockedReason
+                ?? String(localized: "This conversation has no Mac to send to.")
+            return
+        }
         send(text, using: service, to: backend)
     }
 
@@ -290,9 +430,6 @@ struct SessionDetailView: View {
 
     private let repository: any SessionRepository
     private let sessionID: UUID
-    /// Built once per view rather than per send: `ChatService` is an actor, and
-    /// a fresh one per tap would serialise nothing and lose any in-flight turn.
-    private let service: ChatService
 
     @State private var model: SessionDetailModel?
     @State private var draft: String = ""
@@ -300,11 +437,6 @@ struct SessionDetailView: View {
     init(repository: any SessionRepository, sessionID: UUID) {
         self.repository = repository
         self.sessionID = sessionID
-        // Milestone A's one fake. Everything under it — the session, the
-        // backend, the persistence, the streaming loop — is the real thing;
-        // only the far end is `EchoTransport`. Milestone B replaces this line
-        // with a `BridgeClient` and deletes the file.
-        self.service = ChatService(transport: EchoTransport(), repository: repository)
     }
 
     var body: some View {
@@ -316,8 +448,12 @@ struct SessionDetailView: View {
             }
         }
         .task {
+            // The model builds its own `ChatService` inside `load()`, once the
+            // session names the machine it belongs to. It cannot be built here:
+            // a `BridgeClient` is per host — one token, one pinned certificate,
+            // one endpoint — and this view knows only a session id.
             let model = model ?? SessionDetailModel(
-                repository: repository, sessionID: sessionID, service: service
+                repository: repository, sessionID: sessionID
             )
             self.model = model
             await model.load()
@@ -334,15 +470,6 @@ struct SessionDetailView: View {
             )
         } else {
             VStack(spacing: 0) {
-                // The fake announces itself above the transcript, not buried
-                // under it. A screenshot of this screen has to carry the fact
-                // that no Mac is connected, because screenshots travel further
-                // than the code does and a convincing-looking conversation is
-                // exactly what would be believed.
-                StatusPill(EchoTransport.displayLabel, tone: .warning)
-                    .padding(.horizontal, Space.cardPadding)
-                    .padding(.bottom, 8)
-
                 TranscriptView(messages: model.messages)
 
                 // Why the backend is unroutable, when the session's own status

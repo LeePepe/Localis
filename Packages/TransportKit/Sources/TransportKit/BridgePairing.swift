@@ -21,14 +21,69 @@ public struct BridgePairing: Sendable {
         /// Optional per Amendment A §1.6 — older bridges omit it, and the
         /// client falls back to SPKI matching.
         public let bridgeID: String?
+
+        /// **Public so a caller outside this package can construct one**, which
+        /// is what makes `pair` substitutable rather than merely callable.
+        ///
+        /// A `public struct` with no explicit initialiser gets an *internal*
+        /// memberwise one, so this type was returnable and not constructible —
+        /// an app-side seam declaring `-> BridgePairing.Result` compiles, and no
+        /// fake conforming to it can be written, because no fake can produce the
+        /// return value. That is the same half-a-wire shape as the `internal`
+        /// initialiser on `BridgePairing` itself (task #1): the entry point was
+        /// opened and its return type was not, so "reachable" and "testable"
+        /// came apart with nothing to show for it.
+        ///
+        /// Carries no credential by construction — the token goes straight to
+        /// the Keychain inside `pair` and is never a field here — so a
+        /// constructible `Result` gives a caller nothing it could not already
+        /// read off a successful pairing.
+        public init(bridgeName: String, protocolVersion: Int, bridgeID: String?) {
+            self.bridgeName = bridgeName
+            self.protocolVersion = protocolVersion
+            self.bridgeID = bridgeID
+        }
     }
 
     private let http: any HTTPPerforming
     private let credentials: HostCredentialStore
+    /// The pin this pairing runs on, and the pin it records. **One value, not
+    /// two.**
+    ///
+    /// It used to be a parameter of `pair(presenting:)` while the connection was
+    /// pinned separately by whoever built the `HTTPPerforming`. Those are two
+    /// copies of one fact, and nothing made them agree: a caller could connect
+    /// under one certificate and record another, which produces a host that
+    /// pairs successfully and can never connect again. Held here, "the pin we
+    /// handshook with" and "the pin we wrote down" are the same stored property.
+    private let pin: SPKIHash
 
-    init(http: any HTTPPerforming, credentials: HostCredentialStore) {
+    init(http: any HTTPPerforming, credentials: HostCredentialStore, pin: SPKIHash) {
         self.http = http
         self.credentials = credentials
+        self.pin = pin
+    }
+
+    /// Pairing, from outside this package.
+    ///
+    /// **The pin is not optional, and that is the point of this signature.**
+    /// Amendment E §3 settled it: the SPKI and the six-digit code come off the
+    /// Mac's screen together, so the pairing request itself goes out on an
+    /// already-pinned connection — there is no "first connection with no pin"
+    /// step to support. An `SPKIHash?` here would make that step expressible
+    /// from outside the package, and the contract says implementations MUST NOT
+    /// keep such a path (§0).
+    ///
+    /// `PinnedHTTP` stays internal for the same reason: it is the only type that
+    /// can build an unpinned session, and this initialiser is the way to get a
+    /// pinned one without being handed the ability to skip it.
+    ///
+    /// - Parameter spki: read by the user from the bridge's own output (the
+    ///   `pin` line it prints at start-up) and typed or pasted in — the same
+    ///   out-of-band channel as the code, which is what makes it a trust anchor
+    ///   rather than something the bridge asserts about itself.
+    public init(pinnedTo spki: SPKIHash, credentials: HostCredentialStore = HostCredentialStore()) {
+        self.init(http: PinnedHTTP(pin: spki), credentials: credentials, pin: spki)
     }
 
     /// Pairs with the bridge at `endpoint` using the six-digit code shown on
@@ -36,9 +91,6 @@ public struct BridgePairing: Sendable {
     ///
     /// - Parameters:
     ///   - host: the locally generated id this machine will keep for life.
-    ///   - presenting: the SPKI of the certificate the bridge presented on this
-    ///     connection. Recorded as the pin, and checked on every connection
-    ///     afterwards.
     /// - Throws: `LocalisError.pairingCodeRejected` for a wrong or expired code
     ///   (the session on the Mac is still live, so re-reading it works);
     ///   `.pairingSessionExpired` once five failures have invalidated the
@@ -48,7 +100,6 @@ public struct BridgePairing: Sendable {
         host: HostID,
         endpoint: HostEndpoint,
         code: String,
-        presenting spki: SPKIHash,
         deviceName: String,
         deviceID: UUID
     ) async throws -> Result {
@@ -81,8 +132,12 @@ public struct BridgePairing: Sendable {
 
         // Order matters: the token first, so a Keychain failure cannot leave a
         // pin behind for a host with no way to authenticate.
+        //
+        // `pin` is the same value the connection above was made under — see the
+        // property's own note. Nothing here can record a certificate we did not
+        // just talk to.
         try credentials.saveToken(result.token, for: host)
-        try credentials.savePin(spki, for: host)
+        try credentials.savePin(pin, for: host)
 
         return Result(
             bridgeName: result.bridgeName,

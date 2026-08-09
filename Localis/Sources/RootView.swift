@@ -27,6 +27,12 @@ struct RootView: View {
     @State private var hosts: HostListModel?
     /// Explicit path so a screenshot run can push the same value a tap pushes.
     @State private var path = NavigationPath()
+    /// Whether the pairing sheet is up.
+    ///
+    /// A sheet rather than a destination on `path`: pairing is a task the user
+    /// finishes or abandons, and it must not become a row in the back stack that
+    /// a swipe can return to with a spent code still in its fields.
+    @State private var isAddingHost = false
 
     /// How wide a host card is.
     ///
@@ -67,6 +73,34 @@ struct RootView: View {
             .navigationDestination(for: SessionRowState.ID.self) { id in
                 SessionDetailView(repository: repository, sessionID: id)
             }
+            // **The way in to pairing (B-2).** Until this existed the app could
+            // not pair with any Mac: `BridgePairing` was reachable and nothing
+            // reached it, so every host stayed `.discovered` for life and the
+            // only "Paired" record anyone had seen was `DemoSeed` writing the
+            // state directly.
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        isAddingHost = true
+                    } label: {
+                        Label(String(localized: "Add a Mac"), systemImage: "plus")
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $isAddingHost) {
+            // The model is built here, from the same repository everything else
+            // reads through, and torn down with the sheet — a browse must not
+            // outlive the screen that is showing its results.
+            AddHostView(model: HostPairingModel(repository: repository))
+        }
+        .onChange(of: isAddingHost) { _, showing in
+            // Reloaded when the sheet closes, whatever closed it. A host that
+            // just paired is a new row and a changed pill, and the list is read
+            // once at launch — without this the machine the user just paired is
+            // absent until the next cold start.
+            guard !showing, let hosts else { return }
+            Task { await hosts.load() }
         }
         .task {
             // Screenshot fixtures, written through the real repository and only
@@ -140,9 +174,13 @@ struct RootView: View {
     /// the acceptance test for host persistence is this view showing a Mac
     /// after a cold start, not a passing suite.
     ///
-    /// Deliberately not a whole screen yet: pairing has no UI (B-2), so a row
-    /// here can be looked at and not tapped. A row that navigated somewhere
-    /// unbuilt would be a worse lie than a row that admits it is not paired.
+    /// Deliberately not a whole screen yet: a row here can be looked at and not
+    /// tapped. Pairing is no longer the reason — `AddHostView` exists now, and
+    /// is reached from the toolbar rather than from a row, because the machine
+    /// being paired is often one the strip does not yet contain. What is still
+    /// missing is a per-host screen to navigate *to*, and a row that navigated
+    /// somewhere unbuilt would be a worse lie than a row that admits it is not
+    /// paired.
     @ViewBuilder
     private func hostStrip(_ hosts: HostListModel) -> some View {
         if let loadError = hosts.loadError {

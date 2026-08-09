@@ -3,7 +3,6 @@ import Testing
 
 @testable import Localis
 
-import ChatService
 import LocalisModels
 import SessionStore
 import TransportKit
@@ -40,7 +39,26 @@ struct SessionReconnectTests {
         return SwiftDataSessionRepository(container: container)
     }
 
-    /// A detail model wired the way `SessionDetailView` wires one.
+    /// A Keychain stand-in with a pin for every machine.
+    ///
+    /// The store has no pin column, so a host read back from it is
+    /// `canConnect == false` and `SessionDetailModel` refuses to build a
+    /// transport for it. That refusal is correct and is not this suite's
+    /// subject: #25 is about a *paired, reachable* machine whose composer stays
+    /// grey. Without this, every test here would be blocked one step earlier,
+    /// for a pairing reason, and would look like the deadlock returning.
+    private struct AnyPin: PinReading {
+        func pin(for host: HostID) throws -> SPKIHash? { SPKIHash(base64: "AAA=") }
+    }
+
+    /// A detail model wired the way `SessionDetailView` wires one, with the
+    /// Keychain and the transport substituted.
+    ///
+    /// `EchoTransport` is a `LocalisTests` fixture as of milestone B — the app
+    /// builds a `BridgeClient` per host now, and no test can use that without a
+    /// Mac on the network. Its `probe` answers `.reachable` unconditionally,
+    /// which is exactly the premise this suite needs: the host answers, and the
+    /// question is whether the composer opens.
     private static func detailModel(
         repository: any SessionRepository,
         sessionID: UUID
@@ -48,7 +66,8 @@ struct SessionReconnectTests {
         await SessionDetailModel(
             repository: repository,
             sessionID: sessionID,
-            service: ChatService(transport: EchoTransport(), repository: repository)
+            credentials: AnyPin(),
+            makeTransport: { _ in EchoTransport() }
         )
     }
 
@@ -57,6 +76,11 @@ struct SessionReconnectTests {
     /// Stored `.idle` deliberately. The point is that storing the *best*
     /// possible status still comes back unsendable, so the failure cannot be
     /// blamed on the fixture having saved something pessimistic.
+    ///
+    /// `pairingState: .paired` for the same reason, one layer down: a
+    /// `.discovered` record is one `SessionDetailModel` correctly refuses to
+    /// build a transport for, and this suite would then be measuring that
+    /// refusal rather than #25.
     private static func seed(
         into repository: SwiftDataSessionRepository
     ) async throws -> (host: HostID, session: UUID) {
@@ -64,7 +88,8 @@ struct SessionReconnectTests {
             id: HostID(),
             displayName: "Tian's MacBook Pro",
             endpoint: HostEndpoint(host: "mac.local", port: 8443),
-            bridgeID: "bridge-abc"
+            bridgeID: "bridge-abc",
+            pairingState: .paired
         )
         try await repository.save(host)
 

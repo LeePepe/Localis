@@ -3,16 +3,16 @@ import Testing
 
 @testable import Localis
 
-import ChatService
 import LocalisModels
 import SessionStore
 import TransportKit
 
 /// A transport that reports whatever this test says the host reports (#41).
 ///
-/// `EchoTransport` answers `.available` unconditionally, which is right for a
-/// fake with no host behind it and useless here: the entire subject of this
-/// suite is what the app does with the *other* answer.
+/// `EchoTransport`, the fixture the assembly suites stream through, answers
+/// `.listed` with the backend unchanged and `.reachable` unconditionally —
+/// right for a fake with no host behind it and useless here: the entire subject
+/// of this suite is what the app does with the *other* answers.
 private actor DescribingTransport: AgentTransport {
     private let description: BackendDescription
     private let reachability: HostReachability
@@ -106,6 +106,12 @@ struct BackendAvailabilityTests {
     /// anything else (both repositories drop the field), so seeding a negative
     /// would be describing a state the app can never actually be in, and the
     /// test would be about a fixture rather than about the app.
+    ///
+    /// `pairingState: .paired` is what makes the host connectable once
+    /// `AnyPin` reattaches a pin. Without it `SessionDetailModel` never builds a
+    /// transport at all, `DescribingTransport` is never asked anything, and
+    /// every test here would pass or fail on a pairing sentence rather than on
+    /// the availability answer it names.
     private static func seed(
         into repository: SwiftDataSessionRepository
     ) async throws -> UUID {
@@ -113,7 +119,8 @@ struct BackendAvailabilityTests {
             id: HostID(),
             displayName: "A paired Mac",
             endpoint: HostEndpoint(host: "mac.local", port: 8443),
-            bridgeID: "bridge-abc"
+            bridgeID: "bridge-abc",
+            pairingState: .paired
         )
         try await repository.save(host)
 
@@ -135,6 +142,27 @@ struct BackendAvailabilityTests {
         return session.id
     }
 
+    /// A Keychain stand-in with a pin for every machine.
+    ///
+    /// The store strips pins on save, so a host read back has
+    /// `canConnect == false` and no transport is built for it at all. This suite
+    /// is about the answer a *connected* host gives, so the pin has to come from
+    /// somewhere; `HostAssemblyTests` owns the question of which machines have
+    /// one.
+    private struct AnyPin: PinReading {
+        func pin(for host: HostID) throws -> SPKIHash? { SPKIHash(base64: "AAA=") }
+    }
+
+    /// The stub is handed over as the whole transport, not as a service built
+    /// around one.
+    ///
+    /// **This is the seam milestone B added, and using it is the point.** The
+    /// model builds its own `ChatService` during `load()`, because the transport
+    /// is per host and the host is not known until the session has been read
+    /// (`SessionDetailModel.openService`). A helper that still constructed the
+    /// service here would be handing the model something it no longer accepts —
+    /// and, worse, would bypass the host join, so a suite about what the *host*
+    /// says would never have touched a host record.
     private static func model(
         repository: any SessionRepository,
         sessionID: UUID,
@@ -143,7 +171,8 @@ struct BackendAvailabilityTests {
         await SessionDetailModel(
             repository: repository,
             sessionID: sessionID,
-            service: ChatService(transport: transport, repository: repository)
+            credentials: AnyPin(),
+            makeTransport: { _ in transport }
         )
     }
 

@@ -3,10 +3,10 @@ import Testing
 
 @testable import Localis
 
-import ChatService
 import LocalisModels
 import LocalisUI
 import SessionStore
+import TransportKit
 
 /// App-target assembly checks.
 ///
@@ -30,11 +30,28 @@ struct LocalisAppTests {
     private static let t0 = Date(timeIntervalSince1970: 1_700_000_000)
 
     /// A repository seeded through the same protocol production writes through.
+    ///
+    /// **The host row is written `.paired`, and that is load-bearing as of
+    /// milestone B.** `SessionDetailModel` now builds its transport per host and
+    /// refuses to build one for a machine that is not `canConnect` — so a
+    /// fixture that seeded only a backend and a session would leave every test
+    /// here blocked for a *pairing* reason, which is not what any of them is
+    /// about. The pin comes from `AnyPin` below rather than from this record,
+    /// because `save(_ host:)` strips it: the store has no pin column, by
+    /// design (`HostAssembly`).
     private static func seeded(
         _ entries: (host: HostID, backend: AgentBackend, session: Session)...
     ) async throws -> InMemorySessionRepository {
         let repository = InMemorySessionRepository()
         for entry in entries {
+            try await repository.save(
+                LocalisHost(
+                    id: entry.host,
+                    displayName: "A paired Mac",
+                    endpoint: HostEndpoint(host: "mac.local", port: 8443),
+                    pairingState: .paired
+                )
+            )
             try await repository.save(entry.backend, on: entry.host)
             try await repository.create(entry.session)
         }
@@ -61,11 +78,32 @@ struct LocalisAppTests {
         )
     }
 
-    /// A detail model wired the way `SessionDetailView` wires one.
+    /// A Keychain stand-in that has a pin for every machine.
     ///
-    /// The transport is the app's own `EchoTransport` rather than a test double.
-    /// Substituting a tidier fake here would test a `ChatService` this app never
-    /// builds — and the point of this suite is the assembly as it ships.
+    /// Needed because the store strips pins on save, so a host read back is
+    /// always `canConnect == false` until `HostAssembly` reattaches one. Answers
+    /// for any host rather than for a seeded set: no test in this suite is about
+    /// *which* machine has a pin — `HostAssemblyTests` owns that question — and
+    /// a keyed fixture here would be one more thing to keep in step with
+    /// `seeded`.
+    private struct AnyPin: PinReading {
+        func pin(for host: HostID) throws -> SPKIHash? { SPKIHash(base64: "AAA=") }
+    }
+
+    /// A detail model wired the way `SessionDetailView` wires one, with the two
+    /// things that must not touch a real device substituted.
+    ///
+    /// **`EchoTransport` is a test fixture now, not the app's transport.** Until
+    /// milestone B this helper deliberately used the app's own fake, on the
+    /// argument that substituting a tidier one would test a `ChatService` the
+    /// app never builds. That argument expired with the change it was waiting
+    /// for: production builds a `BridgeClient` per host
+    /// (`ChatTransport.swift`), the fake moved into this target, and no
+    /// assembly test can use the real transport without a Mac on the network.
+    /// What this helper still asserts about the assembly is the part that is
+    /// checkable here — the model resolves its own host through `HostAssembly`
+    /// and asks the factory for a transport — and `transportSeesTheSessionsOwnHost`
+    /// is the test that pins that down.
     private static func detailModel(
         repository: any SessionRepository,
         sessionID: UUID
@@ -73,7 +111,8 @@ struct LocalisAppTests {
         await SessionDetailModel(
             repository: repository,
             sessionID: sessionID,
-            service: ChatService(transport: EchoTransport(), repository: repository)
+            credentials: AnyPin(),
+            makeTransport: { _ in EchoTransport() }
         )
     }
 
@@ -235,11 +274,19 @@ struct LocalisAppTests {
     ///
     /// **What makes it green now.** `SessionDetailModel.load` ends with a
     /// reconnect: it asks the transport whether the backend is live, and writes
-    /// the answer back. The app's transport is still `EchoTransport`, whose
-    /// `probe` returns true unconditionally (`Fakes/EchoTransport.swift:106`) —
-    /// so this asserts the wiring, and the milestone-B swap to `BridgeClient` is
-    /// what makes the answer mean anything. The fake announces itself on screen,
-    /// so no screenshot can pass this off as a live Mac.
+    /// the answer back.
+    ///
+    /// **The transport here is a fixture, and that sentence used to say
+    /// otherwise.** Until milestone B this note read "the app's transport is
+    /// still `EchoTransport`, whose `probe` returns true unconditionally
+    /// (`Fakes/EchoTransport.swift:106`) … the fake announces itself on screen,
+    /// so no screenshot can pass this off as a live Mac." All three clauses are
+    /// now false: production builds a `BridgeClient` per host, that file is in
+    /// `LocalisTests/` and invisible to the app, and the pill that announced it
+    /// is deleted. `probe` still returns `.reachable` unconditionally — that is
+    /// the one part that survived, and it is why this test asserts the *wiring*
+    /// (a reachable host ends with a sendable composer) and not that any
+    /// particular Mac answered.
     ///
     /// `orphanedSessionStaysBlocked` in `SessionReconnectTests` is the guard on
     /// the shortcut this must not be made green by: relaxing the normalisation

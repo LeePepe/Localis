@@ -60,6 +60,38 @@ the output for a `func` name finds nothing, because what is printed is the
 Filter by identifier, grep results by display name, and treat any run reporting
 zero tests as a run that did not happen.
 
+### `xcodebuild`: `Executed 0 tests` is XCTest's count, not the run's
+
+Sibling of the above and reached without any `--filter`. An app-target run of a
+suite that is entirely swift-testing prints **all three** of these in one log:
+
+```
+** TEST SUCCEEDED **                                     ← true, and says nothing
+Executed 0 tests, with 0 failures (0 unexpected)         ← XCTest's tally; this repo has no XCTest
+✔ Test run with 99 tests in 12 suites passed             ← the answer
+```
+
+Stopping at either of the first two is a wrong conclusion in the *opposite*
+direction each time: `TEST SUCCEEDED` reads as "everything ran and passed", and
+`Executed 0 tests` reads as "nothing ran at all". Both were reported here within
+a minute of each other, off the same log, before anyone found the third line.
+**Grep for `Test run with`, and read nothing else as a verdict.**
+
+Two more things that log will not tell you, both of which produced a false green
+in one evening:
+
+- **Exit code and the harness's "completed (exit code 0)" describe the wrapper,
+  not the tests.** One run reported exit 0 while the swift-testing summary said
+  `✘ … failed after 0.579 seconds with 3 issues`.
+- **A green may be about code you have already changed.** When anything else is
+  writing the tree (a teammate, a formatter), compare the built bundle's mtime
+  against your sources — twice here the product predated a source edit by under
+  a minute, so the pass was real and answered a question nobody was asking.
+
+And when counting failures, remember the test *names* are prose: `grep -c
+"failed"` matched four passing lines whose names begin "a failed re-pair…".
+Count `✘`, not the word.
+
 ### SwiftLint does not see test code at all
 
 `.swiftlint.yml` excludes `LocalisTests` and `Packages/*/Tests`. That is

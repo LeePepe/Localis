@@ -2,46 +2,48 @@ import Foundation
 import LocalisModels
 import TransportKit
 
-/// A fake `AgentTransport` that replies to itself, for milestone A only.
+/// A fake `AgentTransport` that replies to itself. **Test fixture only.**
 ///
-/// ---- Read this before using it anywhere ----
+/// ---- What changed, and why the old warning is no longer the point ----
 ///
-/// This connects to nothing. There is no Mac, no bridge, no agent, no network.
-/// It exists so milestone A can prove the *assembly* works — that a tap in the
-/// composer reaches `ChatService`, that `ChatService` persists through
-/// `SwiftDataSessionRepository`, that streamed snapshots reach `TranscriptView`,
-/// and that all of it survives a relaunch. Every one of those is a real seam
-/// between real layers. Only the far end is fake.
+/// This file lived in `Localis/Sources/Fakes/` for milestone A, where it was the
+/// app's real far end and the screen carried a "Echo (fake)" pill so that no
+/// screenshot of it could be mistaken for a live Mac. Milestone B replaced that
+/// wiring with a per-host `BridgeClient` (`ChatTransport.swift`,
+/// `SessionDetailModel.openService`), so the production target now contains no
+/// fake at all and the pill is gone with it. The danger this file was built
+/// around — a stand-in that makes the app look connected, with no pressure to
+/// replace it because nothing is visibly broken — cannot recur from here: **the
+/// app target cannot see this file.** It is compiled into `LocalisTests` only,
+/// and a production `import` of it does not link.
 ///
-/// **Why a fake is dangerous here specifically.** A hardcoded
-/// `InMemorySessionRepository` is how this project ended up with seven packages,
-/// 538 passing tests, and an app that could not open a conversation: a stand-in
-/// that made everything look connected, and no pressure to replace it because
-/// nothing was visibly broken. This type is the same shape. It is admitted only
-/// because milestone B deletes it, and it is built to be impossible to mistake
-/// for the real thing in the meantime:
+/// **What it is for now.** It is the ordinary streaming transport for the
+/// app-assembly suites: a fake that succeeds, streams in pieces, and answers
+/// `.reachable` / `.listed`, so a test about *the assembly* (does a tap reach
+/// `ChatService`, does a restored session become sendable) does not have to
+/// restate a happy-path transport each time. Suites whose subject is a specific
+/// answer from the host build their own stubs — `DescribingTransport` in
+/// `BackendAvailabilityTests` for the availability cases, `RefusingTransport` in
+/// `HostRevocationTests` for a refusal — because this one cannot express those.
 ///
-///   1. **It says so at runtime.** `displayLabel` is rendered in the UI, so a
-///      screenshot of a fake conversation cannot be mistaken for a real one.
-///      Screenshots travel further than code does, and the danger of a demo
-///      fake is not in the code — it is in the impression the picture leaves.
-///   2. **It is not in `Packages/`.** Inside a package it would become shared
-///      infrastructure, get imported by something else, and grow dependents
-///      that make it expensive to delete. Here, only the app can see it.
-///   3. **Its replies are visibly canned.** It echoes the prompt back rather
-///      than saying anything plausible. A fake that produces convincing prose
-///      is one screenshot away from being believed.
-///
-/// Milestone B deletes this file and constructs a real `BridgeClient`. The
-/// deletion is a tracked item, not an intention.
+/// Its replies stay visibly canned. That is no longer about screenshots; it is
+/// so that this text appearing in a failure dump or a bug report identifies
+/// itself immediately as a fixture rather than as something an agent said.
 struct EchoTransport: AgentTransport {
-    /// Shown in the UI wherever this transport is in use. Not decoration — it
-    /// is the runtime evidence that requirement 1 above is actually met.
+    /// Written into the reply text, so a transcript captured from a test names
+    /// its own source. No longer rendered anywhere in the app — the milestone-A
+    /// `StatusPill` that displayed it was deleted along with the production copy
+    /// of this file.
     static let displayLabel = "Echo (fake)"
 
-    /// Delay between streamed chunks. Slow enough that the reply visibly
-    /// arrives in pieces — milestone A has to *show* streaming, and text that
-    /// appears all at once demonstrates nothing about the stream loop.
+    /// Delay between streamed chunks.
+    ///
+    /// It existed so the reply *visibly* arrived in pieces on a milestone-A
+    /// screen. Nothing renders this transport now, so the default is dead weight
+    /// on any test that forgets to zero it — kept, rather than removed, because
+    /// `EchoTransportTests.streamsInPieces` still asserts the chunking and a
+    /// transport that yielded everything at once would be a different fixture.
+    /// Tests that only need a reply pass `.zero`.
     private let chunkDelay: Duration
 
     init(chunkDelay: Duration = .milliseconds(90)) {
@@ -109,8 +111,10 @@ struct EchoTransport: AgentTransport {
     ///
     /// There is no host to ask, so there is nothing that could be signed out.
     /// `.listed` rather than `.unknown` deliberately: `.unknown` means "could
-    /// not ask", which would leave every milestone-A conversation reporting an
-    /// unreachable Mac when the fake is working exactly as intended.
+    /// not ask", which would block the composer in every suite that uses this
+    /// as its happy-path transport — reporting an unreachable Mac while the
+    /// fake is working exactly as intended. A test whose subject *is* the
+    /// unreachable answer builds a stub that says so (`DescribingTransport`).
     func refresh(_ backend: AgentBackend) async -> BackendDescription {
         .listed(backend)
     }
@@ -118,7 +122,7 @@ struct EchoTransport: AgentTransport {
     /// The canned reply, split into streamable pieces.
     ///
     /// Deliberately states what it is in its first words. If this text ever
-    /// appears in a bug report or a screenshot, the reader should not have to
+    /// appears in a failure dump or a bug report, the reader should not have to
     /// work out whether they are looking at a real agent.
     private static func reply(to prompt: String) -> [String] {
         let quoted = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
