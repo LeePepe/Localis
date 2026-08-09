@@ -27,7 +27,17 @@ default_platform(:ios)
 APP_IDENTIFIER = "com.leepepe.localis".freeze
 SCHEME = "Localis".freeze
 XCODEPROJ = "Localis.xcodeproj".freeze
-TEAM_ID = ENV.fetch("LOCALIS_TEAM_ID", "XXXXXXXXXX").freeze
+# **No default.** It used to be `ENV.fetch("LOCALIS_TEAM_ID", "XXXXXXXXXX")`,
+# and that default is what an unset variable looked like for the whole first
+# release attempt: the lane ran for two minutes, fetched a profile, and died
+# inside Xcode with `No profile for team 'XXXXXXXXXX'` — a message that reads
+# like a provisioning problem and sends you to the Developer Portal, where
+# everything is fine. `local/signing.env` is gitignored, so the variable is
+# present on a developer's machine and absent in CI, which is exactly the
+# arrangement where a placeholder default hides the real failure.
+#
+# `fetch` with no default raises at load time instead, naming the variable.
+TEAM_ID = ENV.fetch("LOCALIS_TEAM_ID").freeze
 MARKETING_VERSION = "1.0".freeze
 
 platform :ios do

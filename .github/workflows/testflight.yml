@@ -141,6 +141,15 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          # The signing team. Absent here for the whole first release attempt,
+          # and the symptom pointed somewhere else entirely: `Fastfile` defaulted
+          # to the literal `XXXXXXXXXX`, so the lane fetched and installed a
+          # perfectly good profile and then died inside Xcode with `No profile
+          # for team 'XXXXXXXXXX'` — which reads as a Developer Portal problem.
+          # `local/signing.env` supplies it on a developer's machine and is
+          # gitignored, so this is the one environment where it can go missing.
+          # The default is gone now; `Fastfile` raises by name if this is unset.
+          LOCALIS_TEAM_ID: ${{ secrets.LOCALIS_TEAM_ID }}
           FASTLANE_SKIP_UPDATE_CHECK: "1"
           # A cold SPM resolve + showBuildSettings on a self-hosted runner can
           # exceed fastlane's 3s default (even after retries), which makes
