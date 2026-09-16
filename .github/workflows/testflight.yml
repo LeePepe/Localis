@@ -1,12 +1,8 @@
 name: testflight
 
-# Periodically package main and upload it to TestFlight (internal testing).
-#   - schedule: checks once a day at 03:00 CST; builds only when main has new
-#     commits since the last successful release. That point is recorded in the
-#     moving tag `testflight/last-released`, which makes the gate cumulative —
-#     commits are never dropped because a build failed or the machine was off;
-#     the next run picks up everything that accumulated.
-#   - workflow_dispatch: manual fallback; force=true ignores the gate.
+# Build and upload main to TestFlight only after an explicit manual dispatch.
+# Automatic releases are paused. force=true bypasses the no-new-commits gate;
+# testflight/last-released still records the last successful release.
 #
 # ⚠️ RUNNER SETUP REQUIRED — this job targets a self-hosted runner labelled
 # `localis-mac`, which does not exist yet. Two options, and this is the user's
@@ -26,8 +22,6 @@ name: testflight
 # Pushing the tag does not re-trigger ci.yml (its push filter is branches:[main]).
 
 on:
-  schedule:
-    - cron: "0 19 * * *" # 19:00 UTC = 03:00 CST
   workflow_dispatch:
     inputs:
       force:
@@ -45,6 +39,7 @@ permissions:
 jobs:
   release:
     name: Build & upload to TestFlight
+    if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, localis-mac]
     timeout-minutes: 40
     steps:

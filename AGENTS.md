@@ -1052,10 +1052,10 @@ intermittent: it applies every time anyone touches a test.
 
 ## TestFlight
 
-`.github/workflows/testflight.yml` checks `main` on a schedule; if there are new
-commits since the last successful release, it builds and uploads to TestFlight
-(internal testing) on a self-hosted runner. Manual fallback: Actions →
-testflight → Run workflow with `force=true`.
+Automatic TestFlight releases are paused. After an explicit user request, run
+`.github/workflows/testflight.yml` through Actions → testflight → Run workflow.
+It builds `main` and uploads to TestFlight on the existing self-hosted runner;
+`force=true` bypasses the no-new-commits gate. Merging a PR does not publish a build.
 
 - **Release marker**: moving tag `testflight/last-released` (cumulative — no
   commit is lost when a build fails or the runner is offline).
